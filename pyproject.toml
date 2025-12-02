@@ -1,0 +1,124 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aw-watcher-enhanced"
+version = "0.1.0"
+description = "Enhanced ActivityWatch watcher with OCR, document context, and categorization"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MPL-2.0"}
+authors = [
+    {name = "DAG Tech"}
+]
+keywords = ["activitywatch", "time-tracking", "productivity", "ocr"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: No Input/Output (Daemon)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Office Suites",
+    "Topic :: Utilities",
+]
+
+dependencies = [
+    "aw-client>=0.5.15",
+    "aw-core>=0.5.16",
+    "requests>=2.28.0",
+]
+
+[project.optional-dependencies]
+# Windows-specific dependencies
+windows = [
+    "pywin32>=306",
+    "winocr>=0.0.3",
+    "wmi>=1.5.1",
+    "mss>=9.0.0",
+    "Pillow>=10.0.0",
+]
+
+# macOS-specific dependencies
+macos = [
+    "pyobjc-core>=10.0",
+    "pyobjc-framework-Cocoa>=10.0",
+    "pyobjc-framework-Quartz>=10.0",
+    "pyobjc-framework-ApplicationServices>=10.0",
+    "ocrmac>=1.0.0",  # Apple Vision OCR (Neural Engine accelerated)
+]
+
+# Linux-specific dependencies
+linux = [
+    "python-xlib>=0.33",
+]
+
+# OCR support (cross-platform)
+ocr = [
+    "mss>=9.0.0",
+    "Pillow>=10.0.0",
+    "rapidocr_onnxruntime>=1.4.0",  # Fast ONNX-based OCR (recommended for Windows)
+]
+
+# OCR fallback (requires Tesseract installed on system)
+ocr-tesseract = [
+    "pytesseract>=0.3.10",
+    "mss>=9.0.0",
+    "Pillow>=10.0.0",
+]
+
+# All optional dependencies for development
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "PyYAML>=6.0",
+]
+
+# Full installation with all features
+all = [
+    "aw-watcher-enhanced[ocr,dev]",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+aw-watcher-enhanced = "aw_watcher_enhanced.main:main"
+
+[project.urls]
+Homepage = "https://github.com/kepptic/aw-watcher-enhanced"
+Repository = "https://github.com/kepptic/aw-watcher-enhanced"
+Documentation = "https://github.com/kepptic/aw-watcher-enhanced/tree/main/docs"
+Issues = "https://github.com/kepptic/aw-watcher-enhanced/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aw_watcher_enhanced*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4"]
+ignore = ["E501"]  # Line too long (handled by black)
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --cov=aw_watcher_enhanced"

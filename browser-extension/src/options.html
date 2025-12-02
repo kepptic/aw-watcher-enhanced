@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>ActivityWatch Enhanced - Settings</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      color: #333;
+      background: #f8f9fa;
+      padding: 24px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 600;
+      color: #111827;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      color: #6b7280;
+      margin-bottom: 24px;
+    }
+
+    .section {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #111827;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: #374151;
+      margin-bottom: 6px;
+    }
+
+    .label-hint {
+      font-weight: 400;
+      color: #6b7280;
+      font-size: 12px;
+    }
+
+    input[type="text"],
+    input[type="url"],
+    input[type="number"],
+    textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    input[type="text"]:focus,
+    input[type="url"]:focus,
+    input[type="number"]:focus,
+    textarea:focus {
+      outline: none;
+      border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+
+    textarea {
+      min-height: 100px;
+      font-family: monospace;
+      font-size: 13px;
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .checkbox-group input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #6366f1;
+    }
+
+    .checkbox-group label {
+      margin-bottom: 0;
+      font-weight: 400;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    button {
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: #6366f1;
+      color: white;
+      border: none;
+    }
+
+    .btn-primary:hover {
+      background: #4f46e5;
+    }
+
+    .btn-secondary {
+      background: white;
+      color: #374151;
+      border: 1px solid #d1d5db;
+    }
+
+    .btn-secondary:hover {
+      background: #f9fafb;
+    }
+
+    .btn-danger {
+      background: white;
+      color: #dc2626;
+      border: 1px solid #fecaca;
+    }
+
+    .btn-danger:hover {
+      background: #fef2f2;
+    }
+
+    .status-message {
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-top: 16px;
+      display: none;
+    }
+
+    .status-message.success {
+      display: block;
+      background: #d1fae5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+    }
+
+    .status-message.error {
+      display: block;
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
+
+    .help-text {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 6px;
+    }
+
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px;
+      background: #f3f4f6;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .status-dot.connected { background: #10b981; }
+    .status-dot.disconnected { background: #ef4444; }
+    .status-dot.checking { background: #f59e0b; }
+  </style>
+</head>
+<body>
+  <h1>ActivityWatch Enhanced</h1>
+  <p class="subtitle">Browser Extension Settings</p>
+
+  <div class="section">
+    <h2 class="section-title">Server Connection</h2>
+
+    <div class="connection-status">
+      <span class="status-dot checking" id="statusDot"></span>
+      <span id="statusText">Checking connection...</span>
+    </div>
+
+    <div class="form-group">
+      <label for="serverUrl">ActivityWatch Server URL</label>
+      <input type="url" id="serverUrl" value="http://localhost:5600" placeholder="http://localhost:5600">
+      <p class="help-text">The URL of your ActivityWatch server</p>
+    </div>
+
+    <button type="button" class="btn-secondary" id="testConnection">Test Connection</button>
+  </div>
+
+  <div class="section">
+    <h2 class="section-title">Tracking Options</h2>
+
+    <div class="form-group">
+      <div class="checkbox-group">
+        <input type="checkbox" id="trackUrls" checked>
+        <label for="trackUrls">Track full URLs</label>
+      </div>
+      <p class="help-text">If disabled, only domain names are recorded</p>
+    </div>
+
+    <div class="form-group">
+      <div class="checkbox-group">
+        <input type="checkbox" id="trackTitles" checked>
+        <label for="trackTitles">Track page titles</label>
+      </div>
+      <p class="help-text">If disabled, titles are redacted</p>
+    </div>
+
+    <div class="form-group">
+      <div class="checkbox-group">
+        <input type="checkbox" id="incognitoTracking">
+        <label for="incognitoTracking">Track incognito/private browsing</label>
+      </div>
+      <p class="help-text">By default, incognito tabs are not tracked</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2 class="section-title">Privacy Exclusions</h2>
+
+    <div class="form-group">
+      <label for="excludeDomains">
+        Excluded Domains
+        <span class="label-hint">(one per line)</span>
+      </label>
+      <textarea id="excludeDomains" placeholder="bank.example.com&#10;private-site.com"></textarea>
+      <p class="help-text">Pages on these domains will not be tracked</p>
+    </div>
+
+    <div class="form-group">
+      <label for="excludePatterns">
+        Excluded URL Patterns
+        <span class="label-hint">(regex, one per line)</span>
+      </label>
+      <textarea id="excludePatterns" placeholder=".*password.*&#10;.*login.*&#10;.*banking.*"></textarea>
+      <p class="help-text">URLs matching these patterns will not be tracked</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2 class="section-title">Client/Project Keywords</h2>
+    <p class="help-text" style="margin-bottom: 16px;">
+      Define keywords to automatically detect clients/projects from page content.
+      Format: client_name: keyword1, keyword2, keyword3
+    </p>
+
+    <div class="form-group">
+      <textarea id="clientKeywords" placeholder="acme-corp: acme, project-x, acme.com&#10;bigcorp: bigcorp, initiative-y&#10;internal: company-name, internal-tool"></textarea>
+    </div>
+  </div>
+
+  <div class="button-group">
+    <button type="button" class="btn-primary" id="saveSettings">Save Settings</button>
+    <button type="button" class="btn-secondary" id="resetSettings">Reset to Defaults</button>
+  </div>
+
+  <div class="status-message" id="statusMessage"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>

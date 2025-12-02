@@ -1,0 +1,50 @@
+{
+  "manifest_version": 2,
+  "name": "ActivityWatch Enhanced",
+  "version": "0.1.0",
+  "description": "Enhanced ActivityWatch browser tracking with URL capture and page content analysis",
+  "author": "DAG Tech",
+
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "storage",
+    "alarms",
+    "http://localhost:5600/*",
+    "http://127.0.0.1:5600/*"
+  ],
+
+  "background": {
+    "scripts": ["src/background.js"],
+    "persistent": false
+  },
+
+  "browser_action": {
+    "default_popup": "src/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "options_ui": {
+    "page": "src/options.html",
+    "open_in_tab": true
+  },
+
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "aw-watcher-enhanced@dagtech.com",
+      "strict_min_version": "91.0"
+    }
+  }
+}

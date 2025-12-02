@@ -1,0 +1,646 @@
+# ActivityWatch Enhanced - Category Rules
+#
+# This file defines rules for automatic activity categorization.
+# Rules are matched in order - first match wins.
+#
+# Rule format:
+#   - match:
+#       app: "regex pattern"    # Match application name
+#       title: "regex pattern"  # Match window title
+#       url: "regex pattern"    # Match URL (browser)
+#       domain: "regex pattern" # Match domain only
+#     category: "Category/Subcategory/Type"
+#
+# Use lowercase for patterns - matching is case-insensitive.
+
+rules:
+  # ==========================================================================
+  # DEVELOPMENT
+  # ==========================================================================
+
+  # IDEs and Code Editors
+  - match:
+      app: "code|code-insiders|codium"
+    category: "Work/Development/Coding"
+
+  - match:
+      app: "pycharm|intellij|webstorm|phpstorm|rider|goland|clion|rubymine|datagrip"
+    category: "Work/Development/Coding"
+
+  - match:
+      app: "vim|nvim|gvim|neovide|macvim"
+    category: "Work/Development/Coding"
+
+  - match:
+      app: "sublime_text|subl"
+    category: "Work/Development/Coding"
+
+  - match:
+      app: "atom"
+    category: "Work/Development/Coding"
+
+  - match:
+      app: "emacs"
+    category: "Work/Development/Coding"
+
+  - match:
+      app: "xcode"
+    category: "Work/Development/Coding"
+
+  - match:
+      app: "android studio|studio64"
+    category: "Work/Development/Coding"
+
+  - match:
+      app: "visual studio|devenv"
+      title: "(?!code)" # Exclude VS Code
+    category: "Work/Development/Coding"
+
+  # Terminals
+  - match:
+      app: "terminal|iterm|iterm2|hyper|alacritty|kitty|warp"
+    category: "Work/Development/Terminal"
+
+  - match:
+      app: "windowsterminal|cmd|powershell|pwsh|conemu|cmder"
+    category: "Work/Development/Terminal"
+
+  - match:
+      app: "gnome-terminal|konsole|xterm|urxvt|terminator|tilix"
+    category: "Work/Development/Terminal"
+
+  # Git and Version Control
+  - match:
+      app: "gitkraken|sourcetree|github desktop|fork|tower|gitx"
+    category: "Work/Development/Git"
+
+  - match:
+      url: "github\\.com/.+/pull/"
+    category: "Work/Development/Code Review"
+
+  - match:
+      url: "github\\.com/.+/issues/"
+    category: "Work/Development/Issues"
+
+  - match:
+      url: "github\\.com/.+/actions"
+    category: "Work/Development/CI-CD"
+
+  - match:
+      url: "github\\.com|gitlab\\.com|bitbucket\\.org"
+    category: "Work/Development"
+
+  - match:
+      url: "gitlab\\.com/.+/merge_requests/"
+    category: "Work/Development/Code Review"
+
+  # Documentation & Research
+  - match:
+      url: "stackoverflow\\.com|stackexchange\\.com"
+    category: "Work/Development/Research"
+
+  - match:
+      url: "docs\\.|documentation\\.|devdocs\\.io|developer\\."
+    category: "Work/Development/Documentation"
+
+  - match:
+      url: "readthedocs\\.io|readthedocs\\.org"
+    category: "Work/Development/Documentation"
+
+  - match:
+      url: "man7\\.org|linux\\.die\\.net|ss64\\.com"
+    category: "Work/Development/Documentation"
+
+  # Package Managers & Registries
+  - match:
+      url: "npmjs\\.com|pypi\\.org|crates\\.io|rubygems\\.org|packagist\\.org"
+    category: "Work/Development/Research"
+
+  - match:
+      url: "hub\\.docker\\.com|quay\\.io"
+    category: "Work/Development/DevOps"
+
+  # CI/CD
+  - match:
+      url: "travis-ci\\.|circleci\\.com|jenkins\\.|teamcity"
+    category: "Work/Development/CI-CD"
+
+  - match:
+      url: "app\\.netlify\\.com|vercel\\.com|heroku\\.com"
+    category: "Work/Development/DevOps"
+
+  # Cloud Consoles
+  - match:
+      url: "console\\.aws\\.amazon\\.com"
+    category: "Work/Development/Cloud/AWS"
+
+  - match:
+      url: "console\\.cloud\\.google\\.com|cloud\\.google\\.com"
+    category: "Work/Development/Cloud/GCP"
+
+  - match:
+      url: "portal\\.azure\\.com|azure\\.microsoft\\.com"
+    category: "Work/Development/Cloud/Azure"
+
+  - match:
+      url: "digitalocean\\.com|linode\\.com|vultr\\.com"
+    category: "Work/Development/Cloud"
+
+  # Databases
+  - match:
+      app: "dbeaver|datagrip|pgadmin|mysql workbench|mongodb compass|tableplus|sequel pro"
+    category: "Work/Development/Database"
+
+  # API Development
+  - match:
+      app: "postman|insomnia|paw|httpie"
+    category: "Work/Development/API"
+
+  - match:
+      url: "postman\\.com|insomnia\\.rest"
+    category: "Work/Development/API"
+
+  # ==========================================================================
+  # COMMUNICATION
+  # ==========================================================================
+
+  # Email - Web
+  - match:
+      url: "mail\\.google\\.com"
+    category: "Work/Communication/Email"
+
+  - match:
+      url: "outlook\\.(com|office)|outlook\\.live\\.com"
+    category: "Work/Communication/Email"
+
+  - match:
+      url: "mail\\.yahoo\\.com|mail\\.proton\\.me|protonmail\\.com"
+    category: "Work/Communication/Email"
+
+  - match:
+      url: "fastmail\\.com|tutanota\\.com|zoho\\.com/mail"
+    category: "Work/Communication/Email"
+
+  # Email - Desktop
+  - match:
+      app: "outlook|mail|thunderbird|mailspring|spark|airmail|canary"
+    category: "Work/Communication/Email"
+
+  # Chat & Messaging
+  - match:
+      app: "slack"
+      url: "slack\\.com|app\\.slack\\.com"
+    category: "Work/Communication/Chat"
+
+  - match:
+      app: "teams|microsoft teams"
+      url: "teams\\.microsoft\\.com"
+    category: "Work/Communication/Chat"
+
+  - match:
+      app: "discord"
+      url: "discord\\.com|discordapp\\.com"
+    category: "Work/Communication/Chat"
+
+  - match:
+      url: "web\\.whatsapp\\.com|whatsapp\\.com"
+    category: "Work/Communication/Chat"
+
+  - match:
+      url: "web\\.telegram\\.org|telegram\\.org"
+    category: "Work/Communication/Chat"
+
+  - match:
+      app: "signal|telegram|whatsapp|messenger"
+    category: "Work/Communication/Chat"
+
+  - match:
+      url: "mattermost\\.|rocket\\.chat|zulip"
+    category: "Work/Communication/Chat"
+
+  # Video Meetings
+  - match:
+      url: "meet\\.google\\.com"
+    category: "Work/Communication/Meetings"
+
+  - match:
+      url: "zoom\\.us|zoom\\.com"
+    category: "Work/Communication/Meetings"
+
+  - match:
+      app: "zoom"
+    category: "Work/Communication/Meetings"
+
+  - match:
+      url: "teams\\.microsoft\\.com.*meeting|teams\\.live\\.com"
+    category: "Work/Communication/Meetings"
+
+  - match:
+      url: "webex\\.com|gotomeeting\\.com|whereby\\.com"
+    category: "Work/Communication/Meetings"
+
+  - match:
+      app: "facetime|skype"
+    category: "Work/Communication/Meetings"
+
+  # ==========================================================================
+  # DOCUMENTATION & WRITING
+  # ==========================================================================
+
+  # Word Processors
+  - match:
+      app: "winword|word|pages|libreoffice writer|writer"
+    category: "Work/Documentation/Writing"
+
+  - match:
+      url: "docs\\.google\\.com/document"
+    category: "Work/Documentation/Writing"
+
+  - match:
+      url: "office\\.com.*word|word\\.office\\.com"
+    category: "Work/Documentation/Writing"
+
+  # Note Taking
+  - match:
+      url: "notion\\.so"
+    category: "Work/Documentation/Notes"
+
+  - match:
+      app: "notion|obsidian|roam|logseq|bear|evernote|onenote"
+    category: "Work/Documentation/Notes"
+
+  - match:
+      url: "evernote\\.com|onenote\\.com"
+    category: "Work/Documentation/Notes"
+
+  # Knowledge Base
+  - match:
+      url: "confluence|wiki\\."
+    category: "Work/Documentation/Wiki"
+
+  - match:
+      url: "notion\\.so.*workspace"
+    category: "Work/Documentation/Wiki"
+
+  # PDF Reading
+  - match:
+      app: "acrobat|preview|foxit|sumatrapdf|pdf"
+      title: "\\.pdf"
+    category: "Work/Documentation/Reading"
+
+  # ==========================================================================
+  # DATA & SPREADSHEETS
+  # ==========================================================================
+
+  - match:
+      app: "excel|numbers|libreoffice calc|calc"
+    category: "Work/Data/Spreadsheets"
+
+  - match:
+      url: "docs\\.google\\.com/spreadsheets"
+    category: "Work/Data/Spreadsheets"
+
+  - match:
+      url: "airtable\\.com"
+    category: "Work/Data/Spreadsheets"
+
+  - match:
+      app: "tableau|powerbi|looker|metabase"
+    category: "Work/Data/Analytics"
+
+  - match:
+      url: "analytics\\.google\\.com|datastudio\\.google\\.com"
+    category: "Work/Data/Analytics"
+
+  # ==========================================================================
+  # PRESENTATIONS
+  # ==========================================================================
+
+  - match:
+      app: "powerpoint|powerpnt|keynote|libreoffice impress|impress"
+    category: "Work/Presentations"
+
+  - match:
+      url: "docs\\.google\\.com/presentation"
+    category: "Work/Presentations"
+
+  - match:
+      url: "pitch\\.com|prezi\\.com|canva\\.com.*presentation"
+    category: "Work/Presentations"
+
+  # ==========================================================================
+  # DESIGN
+  # ==========================================================================
+
+  - match:
+      app: "figma"
+      url: "figma\\.com"
+    category: "Work/Design/UI-UX"
+
+  - match:
+      app: "sketch"
+    category: "Work/Design/UI-UX"
+
+  - match:
+      url: "sketch\\.com"
+    category: "Work/Design/UI-UX"
+
+  - match:
+      app: "adobe xd|xd"
+    category: "Work/Design/UI-UX"
+
+  - match:
+      app: "photoshop|gimp|affinity photo"
+    category: "Work/Design/Graphics"
+
+  - match:
+      app: "illustrator|inkscape|affinity designer"
+    category: "Work/Design/Graphics"
+
+  - match:
+      url: "canva\\.com"
+    category: "Work/Design/Graphics"
+
+  - match:
+      app: "after effects|premiere|davinci resolve|final cut"
+    category: "Work/Design/Video"
+
+  - match:
+      app: "blender|cinema 4d|maya|3ds max"
+    category: "Work/Design/3D"
+
+  # ==========================================================================
+  # PROJECT MANAGEMENT
+  # ==========================================================================
+
+  - match:
+      url: "jira|atlassian\\.net.*jira"
+    category: "Work/Project Management/Jira"
+
+  - match:
+      url: "trello\\.com"
+    category: "Work/Project Management/Trello"
+
+  - match:
+      url: "asana\\.com"
+    category: "Work/Project Management/Asana"
+
+  - match:
+      url: "monday\\.com"
+    category: "Work/Project Management/Monday"
+
+  - match:
+      url: "linear\\.app"
+    category: "Work/Project Management/Linear"
+
+  - match:
+      url: "clickup\\.com"
+    category: "Work/Project Management/ClickUp"
+
+  - match:
+      url: "basecamp\\.com"
+    category: "Work/Project Management/Basecamp"
+
+  - match:
+      url: "todoist\\.com|ticktick\\.com|things\\.app"
+    category: "Work/Project Management/Tasks"
+
+  # ==========================================================================
+  # FILE MANAGEMENT
+  # ==========================================================================
+
+  - match:
+      app: "explorer|finder|nautilus|dolphin|thunar"
+    category: "System/File Management"
+
+  - match:
+      url: "drive\\.google\\.com"
+    category: "Work/Files/Google Drive"
+
+  - match:
+      url: "dropbox\\.com"
+    category: "Work/Files/Dropbox"
+
+  - match:
+      url: "onedrive\\.live\\.com|onedrive\\.com"
+    category: "Work/Files/OneDrive"
+
+  - match:
+      url: "box\\.com"
+    category: "Work/Files/Box"
+
+  # ==========================================================================
+  # PERSONAL - SOCIAL MEDIA
+  # ==========================================================================
+
+  - match:
+      url: "twitter\\.com|x\\.com"
+    category: "Personal/Social Media/Twitter"
+
+  - match:
+      url: "facebook\\.com"
+    category: "Personal/Social Media/Facebook"
+
+  - match:
+      url: "instagram\\.com"
+    category: "Personal/Social Media/Instagram"
+
+  - match:
+      url: "linkedin\\.com(?!/learning)"
+    category: "Personal/Social Media/LinkedIn"
+
+  - match:
+      url: "reddit\\.com"
+    category: "Personal/Social Media/Reddit"
+
+  - match:
+      url: "tiktok\\.com"
+    category: "Personal/Social Media/TikTok"
+
+  - match:
+      url: "pinterest\\.com"
+    category: "Personal/Social Media/Pinterest"
+
+  - match:
+      url: "threads\\.net|mastodon\\.|bsky\\.app"
+    category: "Personal/Social Media"
+
+  # ==========================================================================
+  # PERSONAL - ENTERTAINMENT
+  # ==========================================================================
+
+  - match:
+      url: "youtube\\.com"
+    category: "Personal/Entertainment/YouTube"
+
+  - match:
+      url: "netflix\\.com"
+    category: "Personal/Entertainment/Netflix"
+
+  - match:
+      url: "twitch\\.tv"
+    category: "Personal/Entertainment/Twitch"
+
+  - match:
+      url: "spotify\\.com|open\\.spotify\\.com"
+    category: "Personal/Entertainment/Music"
+
+  - match:
+      app: "spotify|apple music|music"
+    category: "Personal/Entertainment/Music"
+
+  - match:
+      url: "soundcloud\\.com|pandora\\.com|tidal\\.com"
+    category: "Personal/Entertainment/Music"
+
+  - match:
+      url: "hulu\\.com|disneyplus\\.com|hbomax\\.com|primevideo\\.com"
+    category: "Personal/Entertainment/Streaming"
+
+  - match:
+      url: "crunchyroll\\.com|funimation\\.com"
+    category: "Personal/Entertainment/Anime"
+
+  - match:
+      app: "steam|epic games|origin|battle\\.net|gog galaxy"
+    category: "Personal/Entertainment/Gaming"
+
+  - match:
+      url: "store\\.steampowered\\.com|epicgames\\.com"
+    category: "Personal/Entertainment/Gaming"
+
+  # ==========================================================================
+  # PERSONAL - SHOPPING
+  # ==========================================================================
+
+  - match:
+      url: "amazon\\.(com|co\\.uk|de|fr|ca|es|it)"
+    category: "Personal/Shopping/Amazon"
+
+  - match:
+      url: "ebay\\.(com|co\\.uk|de)"
+    category: "Personal/Shopping/eBay"
+
+  - match:
+      url: "etsy\\.com"
+    category: "Personal/Shopping/Etsy"
+
+  - match:
+      url: "walmart\\.com|target\\.com|bestbuy\\.com"
+    category: "Personal/Shopping"
+
+  - match:
+      url: "aliexpress\\.com|wish\\.com|shein\\.com"
+    category: "Personal/Shopping"
+
+  # ==========================================================================
+  # PERSONAL - NEWS & READING
+  # ==========================================================================
+
+  - match:
+      url: "news\\.google\\.com|news\\.ycombinator\\.com"
+    category: "Personal/News"
+
+  - match:
+      url: "cnn\\.com|bbc\\.(com|co\\.uk)|nytimes\\.com|theguardian\\.com"
+    category: "Personal/News"
+
+  - match:
+      url: "reuters\\.com|apnews\\.com|washingtonpost\\.com"
+    category: "Personal/News"
+
+  - match:
+      url: "medium\\.com"
+    category: "Personal/Reading/Medium"
+
+  - match:
+      url: "substack\\.com"
+    category: "Personal/Reading/Newsletters"
+
+  - match:
+      url: "pocket\\.com|instapaper\\.com|readwise\\.io"
+    category: "Personal/Reading"
+
+  # ==========================================================================
+  # RESEARCH & LEARNING
+  # ==========================================================================
+
+  - match:
+      url: "udemy\\.com"
+    category: "Research/Learning/Udemy"
+
+  - match:
+      url: "coursera\\.org"
+    category: "Research/Learning/Coursera"
+
+  - match:
+      url: "linkedin\\.com/learning"
+    category: "Research/Learning/LinkedIn"
+
+  - match:
+      url: "pluralsight\\.com"
+    category: "Research/Learning/Pluralsight"
+
+  - match:
+      url: "edx\\.org|khanacademy\\.org|skillshare\\.com"
+    category: "Research/Learning"
+
+  - match:
+      url: "frontendmasters\\.com|egghead\\.io|laracasts\\.com"
+    category: "Research/Learning/Development"
+
+  - match:
+      url: "wikipedia\\.org"
+    category: "Research/Reference/Wikipedia"
+
+  - match:
+      url: "scholar\\.google\\.com|researchgate\\.net|arxiv\\.org"
+    category: "Research/Academic"
+
+  # ==========================================================================
+  # FINANCE & BANKING
+  # ==========================================================================
+
+  - match:
+      url: "bank|banking|chase\\.com|wellsfargo\\.com|bankofamerica\\.com"
+    category: "Personal/Finance/Banking"
+
+  - match:
+      url: "paypal\\.com|venmo\\.com"
+    category: "Personal/Finance/Payments"
+
+  - match:
+      url: "mint\\.com|ynab\\.com|personalcapital\\.com"
+    category: "Personal/Finance/Budgeting"
+
+  - match:
+      url: "robinhood\\.com|schwab\\.com|fidelity\\.com|vanguard\\.com"
+    category: "Personal/Finance/Investing"
+
+  - match:
+      url: "coinbase\\.com|binance\\.com|kraken\\.com"
+    category: "Personal/Finance/Crypto"
+
+  # ==========================================================================
+  # SYSTEM & UTILITIES
+  # ==========================================================================
+
+  - match:
+      app: "settings|system preferences|control panel"
+    category: "System/Settings"
+
+  - match:
+      app: "activity monitor|task manager|htop|btop"
+    category: "System/Monitoring"
+
+  - match:
+      app: "calculator|calc"
+    category: "System/Utilities"
+
+  - match:
+      app: "calendar|ical|fantastical"
+    category: "Work/Calendar"
+
+  - match:
+      url: "calendar\\.google\\.com"
+    category: "Work/Calendar"

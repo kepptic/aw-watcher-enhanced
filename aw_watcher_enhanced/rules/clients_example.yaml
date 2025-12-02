@@ -1,0 +1,182 @@
+# ActivityWatch Enhanced - Client/Project Detection Keywords
+#
+# This file defines keywords for automatic client and project detection.
+# When any of these keywords are found in window titles, URLs, OCR content,
+# or document names, the activity is attributed to the corresponding client.
+#
+# Format:
+#   client_name:
+#     keywords:
+#       - keyword1
+#       - keyword2
+#     domains:        # Optional: specific domains for this client
+#       - client.com
+#     projects:       # Optional: sub-projects within client
+#       project-a:
+#         - keyword-a
+#       project-b:
+#         - keyword-b
+#
+# Keywords are matched case-insensitively.
+# More specific keywords should be used to avoid false matches.
+
+clients:
+
+  # ==========================================================================
+  # EXAMPLE CLIENT CONFIGURATIONS
+  # ==========================================================================
+
+  # Example: Acme Corporation
+  # --------------------------
+  # A typical enterprise client with multiple projects
+  acme-corp:
+    keywords:
+      - acme
+      - acmecorp
+      - acme-corp
+      - acme corp
+    domains:
+      - acme.com
+      - acmecorp.com
+      - acme-internal.com
+    emails:
+      - "@acme.com"
+      - "@acmecorp.com"
+    projects:
+      website-redesign:
+        - acme-website
+        - acme-redesign
+        - website-v2
+      mobile-app:
+        - acme-mobile
+        - acme-ios
+        - acme-android
+      api-integration:
+        - acme-api
+        - acme-integration
+    jira_projects:
+      - ACME
+      - ACM
+    github_repos:
+      - acme-corp/
+      - acmecorp/
+
+  # Example: BigCorp Industries
+  # ---------------------------
+  # Large client with formal project codes
+  bigcorp:
+    keywords:
+      - bigcorp
+      - big-corp
+      - bigcorp industries
+    domains:
+      - bigcorp.com
+      - bigcorp.io
+      - bigcorp-staging.com
+    emails:
+      - "@bigcorp.com"
+    projects:
+      initiative-alpha:
+        - BC-ALPHA
+        - initiative-alpha
+        - project-alpha
+      initiative-beta:
+        - BC-BETA
+        - initiative-beta
+        - project-beta
+    jira_projects:
+      - BC
+      - BCORP
+    slack_channels:
+      - bigcorp-
+      - bc-project-
+
+  # Example: Startup XYZ
+  # --------------------
+  # Smaller client with informal naming
+  startup-xyz:
+    keywords:
+      - startup xyz
+      - startupxyz
+      - xyz-app
+      - xyz app
+    domains:
+      - startupxyz.com
+      - xyz-app.io
+    emails:
+      - "@startupxyz.com"
+      - "founder@"
+    github_repos:
+      - startupxyz/
+    contacts:
+      - john@startupxyz.com
+      - jane@startupxyz.com
+
+  # Example: Internal Projects
+  # --------------------------
+  # Your own company's internal work
+  internal:
+    keywords:
+      - internal
+      - our-company
+      - company-internal
+    domains:
+      - our-company.com
+      - internal.our-company.com
+    projects:
+      infrastructure:
+        - infra-
+        - devops-
+        - internal-tools
+      documentation:
+        - internal-docs
+        - company-wiki
+      hr-admin:
+        - hr-system
+        - admin-portal
+
+  # ==========================================================================
+  # TEMPLATE FOR NEW CLIENTS
+  # ==========================================================================
+
+  # client-name:
+  #   keywords:
+  #     - primary-keyword
+  #     - alternative-keyword
+  #   domains:
+  #     - client-domain.com
+  #   emails:
+  #     - "@client-domain.com"
+  #   projects:
+  #     project-1:
+  #       - project-1-keyword
+  #     project-2:
+  #       - project-2-keyword
+  #   jira_projects:
+  #     - PROJ
+  #   github_repos:
+  #     - org/repo
+  #   slack_channels:
+  #     - client-channel
+
+# ==========================================================================
+# NOTES ON KEYWORD SELECTION
+# ==========================================================================
+#
+# Good keywords:
+#   - Client name (various formats)
+#   - Project codes (JIRA, etc.)
+#   - Domain names
+#   - Repository names
+#   - Unique product names
+#
+# Avoid:
+#   - Common words that could match other contexts
+#   - Single letters or very short strings
+#   - Keywords that overlap with other clients
+#
+# Tips:
+#   - Start with specific keywords and broaden if needed
+#   - Use project/repository names for accuracy
+#   - Include both formal and informal names
+#   - Add email domain patterns for contact detection
