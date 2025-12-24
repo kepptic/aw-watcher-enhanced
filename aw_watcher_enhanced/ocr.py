@@ -9,9 +9,11 @@ Supports multiple OCR engines (in order of preference):
 - Tesseract (cross-platform fallback, slower)
 """
 
+import gc
 import logging
 import re
 import sys
+import tempfile
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -19,6 +21,7 @@ logger = logging.getLogger(__name__)
 # Check available OCR engines
 OCR_AVAILABLE = False
 OCR_ENGINE = None
+_rapidocr_singleton = None  # Singleton to avoid memory leak from recreating engine
 
 try:
     if sys.platform == "darwin":
@@ -48,14 +51,15 @@ try:
         try:
             from rapidocr_onnxruntime import RapidOCR
 
-            # Test that it can initialize
-            _rapid_ocr_instance = RapidOCR()
+            # Test that it can initialize - keep as singleton to avoid memory leak
+            _rapidocr_singleton = RapidOCR()
             OCR_AVAILABLE = True
             OCR_ENGINE = "rapidocr"
             logger.info("Using RapidOCR (ONNX-based, fast)")
         except ImportError:
-            pass
+            _rapidocr_singleton = None
         except Exception as e:
+            _rapidocr_singleton = None
             logger.debug(f"RapidOCR initialization failed: {e}")
 
     if not OCR_AVAILABLE:
@@ -138,6 +142,10 @@ def capture_screen(
 
             # Convert to PIL Image
             img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
+
+            # Clear screenshot buffer to free memory
+            del screenshot
+
             return img
 
     except Exception as e:
@@ -322,6 +330,8 @@ def capture_all_monitors() -> List[Any]:
                 img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
                 images.append(img)
                 logger.debug(f"Captured monitor {i}: {monitor['width']}x{monitor['height']}")
+                # Clear screenshot buffer to free memory
+                del screenshot
     except Exception as e:
         logger.error(f"Multi-monitor capture failed: {e}")
 
@@ -537,23 +547,20 @@ def ocr_image_structured(image) -> Dict[str, Any]:
 
 def _ocr_apple_vision(image) -> str:
     """OCR using Apple Vision Framework (macOS Neural Engine accelerated)."""
-    try:
-        import tempfile
+    import os
 
+    temp_path = None
+    try:
         from ocrmac import ocrmac
 
         # Save image to temp file (ocrmac requires file path)
+        # Use delete=False so we control cleanup, ensuring it happens even on error
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             image.save(f, format="PNG")
             temp_path = f.name
 
         # Run OCR using Apple Vision
         result = ocrmac.OCR(temp_path).recognize()
-
-        # Clean up temp file
-        import os
-
-        os.unlink(temp_path)
 
         # Extract text from results (list of tuples)
         text = " ".join([r[0] for r in result])
@@ -562,6 +569,13 @@ def _ocr_apple_vision(image) -> str:
     except Exception as e:
         logger.error(f"Apple Vision OCR failed: {e}")
         return ""
+    finally:
+        # Always clean up temp file
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 
 def _ocr_apple_vision_structured(image) -> Dict[str, Any]:
@@ -574,10 +588,10 @@ def _ocr_apple_vision_structured(image) -> Dict[str, Any]:
     - content: Main content area
     - barcodes: Any detected barcodes/QR codes
     """
-    try:
-        import os
-        import tempfile
+    import os
 
+    temp_path = None
+    try:
         from ocrmac import ocrmac
 
         # Save image to temp file
@@ -587,9 +601,6 @@ def _ocr_apple_vision_structured(image) -> Dict[str, Any]:
 
         # Run OCR with position data
         result = ocrmac.OCR(temp_path).recognize()
-
-        # Clean up temp file
-        os.unlink(temp_path)
 
         # Categorize text by Y position (Vision uses normalized coords, 0=bottom, 1=top)
         title_bar = []  # y > 0.92 (top ~8% of screen)
@@ -627,6 +638,13 @@ def _ocr_apple_vision_structured(image) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Apple Vision structured OCR failed: {e}")
         return {"title_bar": "", "menu_bar": "", "content": "", "full_text": "", "barcodes": []}
+    finally:
+        # Always clean up temp file
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 
 def _detect_barcodes_vision(image_path: str) -> List[str]:
@@ -710,18 +728,24 @@ def _ocr_windows(image) -> str:
 
 def _ocr_rapidocr(image) -> str:
     """OCR using RapidOCR (ONNX-based PaddleOCR models)."""
+    global _rapidocr_singleton
+
     try:
         import numpy as np
-        from rapidocr_onnxruntime import RapidOCR
+
+        # Use singleton to avoid memory leak from recreating engine
+        if _rapidocr_singleton is None:
+            from rapidocr_onnxruntime import RapidOCR
+            _rapidocr_singleton = RapidOCR()
 
         # Convert PIL Image to numpy array
         img_array = np.array(image)
 
-        # Initialize RapidOCR engine
-        engine = RapidOCR()
-
         # Run OCR - returns list of (box, text, confidence) tuples
-        result, _ = engine(img_array)
+        result, _ = _rapidocr_singleton(img_array)
+
+        # Clean up numpy array
+        del img_array
 
         if not result:
             return ""
@@ -957,12 +981,20 @@ def capture_and_ocr(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             if image:
                 images = [image]
 
-        # OCR each monitor
+        # OCR each monitor and clean up images
         for i, image in enumerate(images):
-            text = ocr_image(image, engine=engine)
-            if text:
-                all_text.append(text)
-                logger.debug(f"OCR monitor {i + 1}: {len(text)} chars")
+            try:
+                text = ocr_image(image, engine=engine)
+                if text:
+                    all_text.append(text)
+                    logger.debug(f"OCR monitor {i + 1}: {len(text)} chars")
+            finally:
+                # Clean up image to prevent memory leak
+                try:
+                    image.close()
+                except Exception:
+                    pass
+        del images
     else:
         # Capture monitor under mouse cursor (better for multi-monitor setups)
         # This ensures we OCR the screen the user is actually looking at
@@ -973,9 +1005,17 @@ def capture_and_ocr(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if image is None:
             return None
 
-        text = ocr_image(image, engine=engine)
-        if text:
-            all_text.append(text)
+        try:
+            text = ocr_image(image, engine=engine)
+            if text:
+                all_text.append(text)
+        finally:
+            # Clean up image to prevent memory leak
+            try:
+                image.close()
+            except Exception:
+                pass
+            del image
 
     if not all_text:
         return None

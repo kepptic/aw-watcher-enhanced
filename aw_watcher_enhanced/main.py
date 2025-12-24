@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import gc
 import logging
 import signal
 import sys
@@ -76,6 +77,10 @@ class EnhancedWatcher:
         self.last_ocr_time = None
         self.last_ocr_result = None  # Cache last OCR/LLM result
 
+        # Memory management - run gc.collect() periodically
+        self._last_gc_time = None
+        self._gc_interval = 300  # Run garbage collection every 5 minutes
+
         # LLM config
         self.llm_model = self.config.get("llm", {}).get("model", "gemma3:4b")
         self.llm_timeout = self.config.get("llm", {}).get("timeout", 10.0)
@@ -134,7 +139,15 @@ class EnhancedWatcher:
             image = capture_screen(window_only=False)
             structured_ocr = None
             if image:
-                structured_ocr = ocr_image_structured(image)
+                try:
+                    structured_ocr = ocr_image_structured(image)
+                finally:
+                    # Explicitly close and delete image to prevent memory leak
+                    try:
+                        image.close()
+                    except Exception:
+                        pass
+                    del image
 
             # Also get standard OCR data for keywords/entities
             ocr_config_with_text = {**ocr_config, "extract_mode": "full_text"}
@@ -385,6 +398,17 @@ class EnhancedWatcher:
                         # Update state tracking
                         self.last_window_data = data
 
+                    # Periodic garbage collection to prevent memory leaks
+                    now = datetime.now(timezone.utc)
+                    if (
+                        self._last_gc_time is None
+                        or (now - self._last_gc_time).total_seconds() >= self._gc_interval
+                    ):
+                        collected = gc.collect()
+                        if collected > 0:
+                            logger.debug(f"Garbage collected {collected} objects")
+                        self._last_gc_time = now
+
                 except KeyboardInterrupt:
                     logger.info("Interrupted, shutting down...")
                     break
@@ -400,7 +424,29 @@ class EnhancedWatcher:
         self.running = False
 
 
+def _hide_dock_icon():
+    """Hide the dock icon on macOS (run as background process)."""
+    if sys.platform != "darwin":
+        return
+
+    try:
+        from AppKit import NSApplication, NSApplicationActivationPolicyProhibited
+
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(NSApplicationActivationPolicyProhibited)
+        # Use print since logging isn't configured yet at this point
+        print("macOS: Disabled dock icon", flush=True)
+    except ImportError as e:
+        # AppKit not available (not on macOS or pyobjc not installed)
+        print(f"macOS: AppKit not available ({e})", flush=True)
+    except Exception as e:
+        print(f"Warning: Failed to hide dock icon: {e}", flush=True)
+
+
 def main():
+    # Hide dock icon early on macOS before any GUI elements appear
+    _hide_dock_icon()
+
     parser = argparse.ArgumentParser(description="Enhanced ActivityWatch Watcher")
     parser.add_argument("--testing", action="store_true", help="Use testing server (port 5666)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
