@@ -53,6 +53,16 @@ if exist "%STARTUP%\AW Watcher Enhanced.lnk" (
     echo Removed startup shortcut.
 )
 
+REM Remove from ActivityWatch tray integration
+if exist "%LOCALAPPDATA%\Programs\activitywatch\aw-watcher-enhanced.exe" (
+    del "%LOCALAPPDATA%\Programs\activitywatch\aw-watcher-enhanced.exe"
+    echo Removed ActivityWatch tray integration.
+)
+if exist "%PROGRAMFILES%\ActivityWatch\aw-watcher-enhanced.exe" (
+    del "%PROGRAMFILES%\ActivityWatch\aw-watcher-enhanced.exe"
+    echo Removed ActivityWatch tray integration.
+)
+
 echo.
 
 REM Ask about data removal

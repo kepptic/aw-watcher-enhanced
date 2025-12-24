@@ -28,6 +28,13 @@ PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 LOG_DIR="$HOME/Library/Logs/activitywatch"
 CONFIG_DIR="$HOME/Library/Application Support/activitywatch/aw-watcher-enhanced"
 
+# ActivityWatch app locations to check
+AW_APP_PATHS=(
+    "/Applications/ActivityWatch.app"
+    "$HOME/Applications/ActivityWatch.app"
+)
+AW_DIR=""
+
 # Print functions
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 success() { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -72,6 +79,104 @@ check_requirements() {
         echo "    Make sure to start ActivityWatch before using this watcher."
     fi
 
+    # Find ActivityWatch installation
+    for aw_path in "${AW_APP_PATHS[@]}"; do
+        if [[ -d "$aw_path" ]]; then
+            AW_DIR="$aw_path/Contents/MacOS"
+            success "Found ActivityWatch at: $aw_path"
+            break
+        fi
+    done
+
+    if [[ -z "$AW_DIR" ]]; then
+        warn "ActivityWatch.app not found. Tray integration will not be available."
+    fi
+
+    echo ""
+}
+
+# Integrate with ActivityWatch tray menu
+integrate_with_activitywatch() {
+    if [[ -z "$AW_DIR" ]]; then
+        return
+    fi
+
+    info "ActivityWatch tray integration..."
+    echo ""
+    echo "This will add aw-watcher-enhanced to the ActivityWatch modules view."
+    echo "The watcher will appear in the ActivityWatch tray menu."
+    echo ""
+
+    read -p "Add to ActivityWatch tray menu? (y/n): " response
+    if [[ "$response" != "y" ]]; then
+        info "Skipping tray integration"
+        return
+    fi
+
+    # Determine Python path
+    if [[ "$USE_VENV" == "true" ]]; then
+        PYTHON_PATH="$PROJECT_DIR/venv/bin/python3"
+    else
+        PYTHON_PATH=$(which python3)
+    fi
+
+    # Create a wrapper script in the ActivityWatch directory
+    # ActivityWatch discovers watchers named aw-watcher-* in its directory
+    WRAPPER_SCRIPT="$AW_DIR/aw-watcher-enhanced"
+
+    cat > "$WRAPPER_SCRIPT" << EOF
+#!/bin/bash
+# ActivityWatch Enhanced Watcher wrapper
+# This script allows ActivityWatch to discover and manage this watcher
+
+export PYTHONPATH="${PROJECT_DIR}:\$PYTHONPATH"
+exec "${PYTHON_PATH}" -m aw_watcher_enhanced "\$@"
+EOF
+
+    chmod +x "$WRAPPER_SCRIPT"
+
+    if [[ -f "$WRAPPER_SCRIPT" ]]; then
+        success "Created wrapper script: $WRAPPER_SCRIPT"
+
+        # Update aw-qt.toml to include our watcher in autostart_modules
+        AW_QT_CONFIG="$HOME/Library/Application Support/activitywatch/aw-qt/aw-qt.toml"
+        if [[ -f "$AW_QT_CONFIG" ]]; then
+            # Check if our watcher is already in the config
+            if ! grep -q "aw-watcher-enhanced" "$AW_QT_CONFIG"; then
+                info "Adding aw-watcher-enhanced to aw-qt autostart modules..."
+                # Update or create autostart_modules line
+                cat > "$AW_QT_CONFIG" << 'TOML'
+[aw-qt]
+autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
+
+[aw-qt-testing]
+autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
+TOML
+                success "Updated aw-qt.toml with autostart configuration"
+            else
+                info "aw-watcher-enhanced already in aw-qt.toml"
+            fi
+        else
+            # Create the config file if it doesn't exist
+            mkdir -p "$(dirname "$AW_QT_CONFIG")"
+            cat > "$AW_QT_CONFIG" << 'TOML'
+[aw-qt]
+autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
+
+[aw-qt-testing]
+autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
+TOML
+            success "Created aw-qt.toml with autostart configuration"
+        fi
+
+        success "Tray integration complete!"
+        echo ""
+        echo "    NOTE: Restart ActivityWatch to see the watcher in the tray menu."
+        TRAY_INTEGRATED=true
+    else
+        error "Failed to create wrapper script. You may need to run with sudo."
+        TRAY_INTEGRATED=false
+    fi
     echo ""
 }
 
@@ -277,6 +382,12 @@ create_uninstall_script() {
 PLIST_NAME="com.dagtech.aw-watcher-enhanced"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 
+# ActivityWatch app locations
+AW_APP_PATHS=(
+    "/Applications/ActivityWatch.app"
+    "$HOME/Applications/ActivityWatch.app"
+)
+
 echo "Uninstalling ActivityWatch Enhanced Watcher..."
 
 # Stop and unload service
@@ -286,6 +397,17 @@ if [[ -f "$PLIST_PATH" ]]; then
     rm "$PLIST_PATH"
     echo "Service removed."
 fi
+
+# Remove ActivityWatch tray integration
+for aw_path in "${AW_APP_PATHS[@]}"; do
+    WRAPPER_SCRIPT="$aw_path/Contents/MacOS/aw-watcher-enhanced"
+    if [[ -f "$WRAPPER_SCRIPT" ]]; then
+        echo "Removing ActivityWatch tray integration..."
+        rm -f "$WRAPPER_SCRIPT"
+        echo "Tray integration removed."
+        break
+    fi
+done
 
 # Ask about config removal
 read -p "Remove configuration files? (y/n): " remove_config
@@ -330,6 +452,13 @@ show_completion() {
         echo ""
     fi
 
+    if [[ "$TRAY_INTEGRATED" == "true" ]]; then
+        echo "Tray Integration:"
+        echo "  The watcher appears in the ActivityWatch tray menu."
+        echo "  Restart ActivityWatch if it doesn't appear immediately."
+        echo ""
+    fi
+
     echo "Configuration:"
     echo "  $CONFIG_DIR/config.yaml"
     echo ""
@@ -345,6 +474,7 @@ main() {
     # Parse arguments
     INSTALL_SERVICE=false
     USE_VENV=false
+    TRAY_INTEGRATED=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -393,6 +523,9 @@ main() {
     install_package
     create_config
     create_uninstall_script
+
+    # ActivityWatch tray integration
+    integrate_with_activitywatch
 
     if [[ "$INSTALL_SERVICE" == "true" ]]; then
         create_launchd_plist

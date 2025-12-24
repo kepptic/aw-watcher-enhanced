@@ -15,6 +15,12 @@ PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 CONFIG_DIR="$HOME/Library/Application Support/activitywatch/aw-watcher-enhanced"
 LOG_DIR="$HOME/Library/Logs/activitywatch"
 
+# ActivityWatch app locations to check for tray integration
+AW_APP_PATHS=(
+    "/Applications/ActivityWatch.app"
+    "$HOME/Applications/ActivityWatch.app"
+)
+
 echo ""
 echo "============================================================"
 echo "   ActivityWatch Enhanced Watcher - Uninstaller"
@@ -30,6 +36,20 @@ if [[ -f "$PLIST_PATH" ]]; then
 else
     echo "No launchd service found."
 fi
+
+echo ""
+
+# Remove ActivityWatch tray integration
+for aw_path in "${AW_APP_PATHS[@]}"; do
+    WRAPPER_SCRIPT="$aw_path/Contents/MacOS/aw-watcher-enhanced"
+    if [[ -f "$WRAPPER_SCRIPT" ]]; then
+        echo -e "${YELLOW}Removing ActivityWatch tray integration...${NC}"
+        rm -f "$WRAPPER_SCRIPT"
+        echo -e "${GREEN}Tray integration removed.${NC}"
+        echo "    NOTE: Restart ActivityWatch to update the tray menu."
+        break
+    fi
+done
 
 echo ""
 

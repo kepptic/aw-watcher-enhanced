@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableDelayedExpansion
 REM ============================================================================
 REM ActivityWatch Enhanced Watcher - Windows Installer
 REM ============================================================================
@@ -46,6 +47,22 @@ set "PROJECT_DIR=%SCRIPT_DIR%.."
 echo Project directory: %PROJECT_DIR%
 echo.
 
+REM Detect ActivityWatch installation
+set "AW_DIR="
+if exist "%LOCALAPPDATA%\Programs\activitywatch\aw-qt.exe" (
+    set "AW_DIR=%LOCALAPPDATA%\Programs\activitywatch"
+)
+if exist "%PROGRAMFILES%\ActivityWatch\aw-qt.exe" (
+    set "AW_DIR=%PROGRAMFILES%\ActivityWatch"
+)
+if defined AW_DIR (
+    echo Found ActivityWatch at: %AW_DIR%
+) else (
+    echo WARNING: ActivityWatch installation not found.
+    echo          Tray integration will not be available.
+)
+echo.
+
 REM Create virtual environment (optional)
 set /p CREATE_VENV="Create virtual environment? (y/n): "
 if /i "%CREATE_VENV%"=="y" (
@@ -72,6 +89,25 @@ pip install pywin32
 python -m pywin32_postinstall -install >nul 2>&1
 echo.
 
+REM Determine the executable path
+set "WATCHER_EXE="
+if /i "%CREATE_VENV%"=="y" (
+    set "WATCHER_EXE=%PROJECT_DIR%\venv\Scripts\aw-watcher-enhanced.exe"
+    set "PYTHONW_EXE=%PROJECT_DIR%\venv\Scripts\pythonw.exe"
+) else (
+    REM Find exe in Python Scripts folder
+    for /f "delims=" %%i in ('python -c "import sys; print(sys.prefix)"') do set "PYTHON_PREFIX=%%i"
+    set "WATCHER_EXE=%PYTHON_PREFIX%\Scripts\aw-watcher-enhanced.exe"
+    set "PYTHONW_EXE=%PYTHON_PREFIX%\Scripts\pythonw.exe"
+)
+
+if exist "%WATCHER_EXE%" (
+    echo Found watcher executable: %WATCHER_EXE%
+) else (
+    echo WARNING: Watcher executable not found at expected location.
+)
+echo.
+
 REM Check if ActivityWatch server is running
 echo Checking ActivityWatch server...
 curl -s http://localhost:5600/api/0/info >nul 2>&1
@@ -80,6 +116,24 @@ if %errorlevel% neq 0 (
     echo Make sure to start ActivityWatch before using this watcher.
 ) else (
     echo ActivityWatch server is running.
+)
+echo.
+
+REM ActivityWatch tray integration
+if defined AW_DIR (
+    if exist "%WATCHER_EXE%" (
+        set /p TRAY_INTEGRATE="Add to ActivityWatch tray menu? (y/n): "
+        if /i "!TRAY_INTEGRATE!"=="y" (
+            echo Copying executable to ActivityWatch directory...
+            copy /Y "%WATCHER_EXE%" "%AW_DIR%\aw-watcher-enhanced.exe" >nul
+            if !errorlevel! equ 0 (
+                echo Tray integration complete.
+                echo NOTE: Restart ActivityWatch to see the watcher in the tray menu.
+            ) else (
+                echo WARNING: Failed to copy executable. Try running as Administrator.
+            )
+        )
+    )
 )
 echo.
 
@@ -106,7 +160,7 @@ REM Create desktop shortcut (optional)
 set /p CREATE_SHORTCUT="Create desktop shortcut? (y/n): "
 if /i "%CREATE_SHORTCUT%"=="y" (
     echo Creating desktop shortcut...
-    powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\AW Watcher Enhanced.lnk'); $s.TargetPath = 'pythonw'; $s.Arguments = '-m aw_watcher_enhanced'; $s.WorkingDirectory = '%PROJECT_DIR%'; $s.Description = 'ActivityWatch Enhanced Watcher'; $s.Save()"
+    powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\AW Watcher Enhanced.lnk'); $s.TargetPath = '%PYTHONW_EXE%'; $s.Arguments = '-m aw_watcher_enhanced'; $s.WorkingDirectory = '%PROJECT_DIR%'; $s.Description = 'ActivityWatch Enhanced Watcher'; $s.Save()"
     echo Desktop shortcut created.
 )
 echo.
@@ -116,7 +170,7 @@ set /p CREATE_STARTMENU="Create Start Menu shortcut? (y/n): "
 if /i "%CREATE_STARTMENU%"=="y" (
     echo Creating Start Menu shortcut...
     set "STARTMENU=%APPDATA%\Microsoft\Windows\Start Menu\Programs"
-    powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%STARTMENU%\AW Watcher Enhanced.lnk'); $s.TargetPath = 'pythonw'; $s.Arguments = '-m aw_watcher_enhanced'; $s.WorkingDirectory = '%PROJECT_DIR%'; $s.Description = 'ActivityWatch Enhanced Watcher'; $s.Save()"
+    powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('!STARTMENU!\AW Watcher Enhanced.lnk'); $s.TargetPath = '%PYTHONW_EXE%'; $s.Arguments = '-m aw_watcher_enhanced'; $s.WorkingDirectory = '%PROJECT_DIR%'; $s.Description = 'ActivityWatch Enhanced Watcher'; $s.Save()"
     echo Start Menu shortcut created.
 )
 echo.
@@ -124,10 +178,10 @@ echo.
 REM Create startup shortcut (if not using service)
 if /i not "%INSTALL_SERVICE%"=="y" (
     set /p CREATE_STARTUP="Add to Windows startup? (y/n): "
-    if /i "%CREATE_STARTUP%"=="y" (
+    if /i "!CREATE_STARTUP!"=="y" (
         echo Adding to startup...
         set "STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
-        powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%STARTUP%\AW Watcher Enhanced.lnk'); $s.TargetPath = 'pythonw'; $s.Arguments = '-m aw_watcher_enhanced'; $s.WorkingDirectory = '%PROJECT_DIR%'; $s.WindowStyle = 7; $s.Description = 'ActivityWatch Enhanced Watcher'; $s.Save()"
+        powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('!STARTUP!\AW Watcher Enhanced.lnk'); $s.TargetPath = '%PYTHONW_EXE%'; $s.Arguments = '-m aw_watcher_enhanced'; $s.WorkingDirectory = '%PROJECT_DIR%'; $s.WindowStyle = 7; $s.Description = 'ActivityWatch Enhanced Watcher'; $s.Save()"
         echo Added to startup folder.
     )
 )
@@ -150,11 +204,23 @@ if /i "%INSTALL_SERVICE%"=="y" (
     echo   - Remove:  python "%SCRIPT_DIR%windows_service.py" remove
     echo.
 )
+if defined AW_DIR (
+    if /i "!TRAY_INTEGRATE!"=="y" (
+        echo Tray Integration:
+        echo   The watcher appears in the ActivityWatch tray menu.
+        echo   Restart ActivityWatch if it doesn't appear immediately.
+        echo.
+    )
+)
 echo Configuration:
 echo   %LOCALAPPDATA%\activitywatch\aw-watcher-enhanced\config.yaml
 echo.
 echo Logs:
 echo   %LOCALAPPDATA%\activitywatch\logs\
 echo.
+echo Executable:
+echo   %WATCHER_EXE%
+echo.
 
 pause
+endlocal
