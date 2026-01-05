@@ -63,6 +63,17 @@ if exist "%PROGRAMFILES%\ActivityWatch\aw-watcher-enhanced.exe" (
     echo Removed ActivityWatch tray integration.
 )
 
+REM Remove from aw-qt.toml autostart_modules
+set "AW_QT_CONFIG=%LOCALAPPDATA%\activitywatch\activitywatch\aw-qt\aw-qt.toml"
+if exist "%AW_QT_CONFIG%" (
+    findstr /C:"aw-watcher-enhanced" "%AW_QT_CONFIG%" >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo Removing from ActivityWatch autostart...
+        powershell -Command "(Get-Content '%AW_QT_CONFIG%') -replace ', \"aw-watcher-enhanced\"', '' -replace '\"aw-watcher-enhanced\", ', '' -replace '\"aw-watcher-enhanced\"', '' | Set-Content '%AW_QT_CONFIG%'"
+        echo Removed aw-watcher-enhanced from ActivityWatch autostart.
+    )
+)
+
 echo.
 
 REM Ask about data removal
