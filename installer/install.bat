@@ -128,6 +128,36 @@ if defined AW_DIR (
             copy /Y "%WATCHER_EXE%" "%AW_DIR%\aw-watcher-enhanced.exe" >nul
             if !errorlevel! equ 0 (
                 echo Tray integration complete.
+
+                REM Add to aw-qt.toml autostart_modules
+                set "AW_QT_CONFIG=%LOCALAPPDATA%\activitywatch\activitywatch\aw-qt\aw-qt.toml"
+                if exist "!AW_QT_CONFIG!" (
+                    echo Configuring automatic startup with ActivityWatch...
+                    findstr /C:"aw-watcher-enhanced" "!AW_QT_CONFIG!" >nul 2>&1
+                    if !errorlevel! neq 0 (
+                        REM aw-watcher-enhanced not in config, add it using PowerShell
+                        powershell -Command "(Get-Content '!AW_QT_CONFIG!') -replace 'autostart_modules = \[(.+?)\]', 'autostart_modules = [$1, \"aw-watcher-enhanced\"]' | Set-Content '!AW_QT_CONFIG!'"
+                        if !errorlevel! equ 0 (
+                            echo Added aw-watcher-enhanced to ActivityWatch autostart.
+                        ) else (
+                            echo WARNING: Could not update aw-qt.toml automatically.
+                            echo Please add "aw-watcher-enhanced" to autostart_modules manually.
+                        )
+                    ) else (
+                        echo aw-watcher-enhanced already in ActivityWatch autostart config.
+                    )
+                ) else (
+                    REM Config doesn't exist, create it
+                    echo Creating aw-qt.toml with autostart configuration...
+                    mkdir "%LOCALAPPDATA%\activitywatch\activitywatch\aw-qt" 2>nul
+                    echo [aw-qt]> "!AW_QT_CONFIG!"
+                    echo autostart_modules = ["aw-server-rust", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]>> "!AW_QT_CONFIG!"
+                    echo.>> "!AW_QT_CONFIG!"
+                    echo [aw-qt-testing]>> "!AW_QT_CONFIG!"
+                    echo autostart_modules = ["aw-server-rust", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]>> "!AW_QT_CONFIG!"
+                    echo Created aw-qt.toml with aw-watcher-enhanced in autostart.
+                )
+
                 echo NOTE: Restart ActivityWatch to see the watcher in the tray menu.
             ) else (
                 echo WARNING: Failed to copy executable. Try running as Administrator.

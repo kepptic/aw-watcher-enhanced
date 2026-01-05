@@ -19,7 +19,21 @@ aw-watcher-enhanced
 
 ## Installation Options
 
-### 1. Windows Service (Recommended for always-on tracking)
+### 1. ActivityWatch Tray Integration (Recommended)
+
+When you select "Add to ActivityWatch tray menu" during installation, the installer:
+1. Copies `aw-watcher-enhanced.exe` to the ActivityWatch program folder
+2. Adds `aw-watcher-enhanced` to `aw-qt.toml` autostart modules
+3. The watcher will start automatically when ActivityWatch starts
+
+**Manual configuration:**
+Edit `%LOCALAPPDATA%\activitywatch\activitywatch\aw-qt\aw-qt.toml`:
+```toml
+[aw-qt]
+autostart_modules = ["aw-server-rust", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
+```
+
+### 2. Windows Service (For always-on tracking)
 
 The Windows Service runs in the background and starts automatically at boot.
 
@@ -50,7 +64,7 @@ python installer\windows_service.py stop
 python installer\windows_service.py remove
 ```
 
-### 2. Startup Folder (Simpler, runs in user context)
+### 3. Startup Folder (Simpler, runs in user context)
 
 Place `startup_script.pyw` in your Startup folder:
 
@@ -63,7 +77,7 @@ Or create a shortcut:
 1. Press Win+R, type `shell:startup`, press Enter
 2. Create a shortcut to `pythonw.exe -m aw_watcher_enhanced`
 
-### 3. Task Scheduler (Most flexible)
+### 4. Task Scheduler (Most flexible)
 
 Create a scheduled task for more control:
 
