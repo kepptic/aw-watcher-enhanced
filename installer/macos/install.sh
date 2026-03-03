@@ -2,13 +2,21 @@
 # ============================================================================
 # ActivityWatch Enhanced Watcher - macOS Installer
 # ============================================================================
-# This script installs aw-watcher-enhanced on macOS and optionally sets it up
-# as a launchd service for automatic startup.
+# Installs aw-watcher-enhanced via pip and registers it with aw-qt.
+#
+# How it works:
+#   1. pip install creates an `aw-watcher-enhanced` executable on PATH
+#      (via console_scripts entry point in pyproject.toml)
+#   2. aw-qt discovers any `aw-*` executable on PATH at startup
+#   3. aw-qt.toml tells aw-qt to autostart our watcher
+#
+# This survives ActivityWatch updates because both the pip-installed
+# executable and aw-qt.toml live outside the .app bundle.
 #
 # Usage:
-#   ./install.sh           # Interactive installation
-#   ./install.sh --service # Install with launchd service
-#   ./install.sh --help    # Show help
+#   ./install.sh              # Interactive installation
+#   ./install.sh --service    # Also install launchd service
+#   ./install.sh --help       # Show help
 # ============================================================================
 
 set -e
@@ -28,20 +36,12 @@ PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 LOG_DIR="$HOME/Library/Logs/activitywatch"
 CONFIG_DIR="$HOME/Library/Application Support/activitywatch/aw-watcher-enhanced"
 
-# ActivityWatch app locations to check
-AW_APP_PATHS=(
-    "/Applications/ActivityWatch.app"
-    "$HOME/Applications/ActivityWatch.app"
-)
-AW_DIR=""
-
 # Print functions
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 success() { echo -e "${GREEN}[OK]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Show header
 show_header() {
     echo ""
     echo "============================================================"
@@ -60,7 +60,6 @@ check_requirements() {
         echo "Install with: brew install python3"
         exit 1
     fi
-
     PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
     success "Python $PYTHON_VERSION found"
 
@@ -71,7 +70,7 @@ check_requirements() {
     fi
     success "pip available"
 
-    # Check if ActivityWatch is installed
+    # Check if ActivityWatch is installed/running
     if curl -s http://localhost:5600/api/0/info &> /dev/null; then
         success "ActivityWatch server is running"
     else
@@ -79,122 +78,19 @@ check_requirements() {
         echo "    Make sure to start ActivityWatch before using this watcher."
     fi
 
-    # Find ActivityWatch installation
-    for aw_path in "${AW_APP_PATHS[@]}"; do
-        if [[ -d "$aw_path" ]]; then
-            AW_DIR="$aw_path/Contents/MacOS"
-            success "Found ActivityWatch at: $aw_path"
-            break
-        fi
-    done
-
-    if [[ -z "$AW_DIR" ]]; then
-        warn "ActivityWatch.app not found. Tray integration will not be available."
-    fi
-
-    echo ""
-}
-
-# Integrate with ActivityWatch tray menu
-integrate_with_activitywatch() {
-    if [[ -z "$AW_DIR" ]]; then
-        return
-    fi
-
-    info "ActivityWatch tray integration..."
-    echo ""
-    echo "This will add aw-watcher-enhanced to the ActivityWatch modules view."
-    echo "The watcher will appear in the ActivityWatch tray menu."
-    echo ""
-
-    read -p "Add to ActivityWatch tray menu? (y/n): " response
-    if [[ "$response" != "y" ]]; then
-        info "Skipping tray integration"
-        return
-    fi
-
-    # Determine Python path
-    if [[ "$USE_VENV" == "true" ]]; then
-        PYTHON_PATH="$PROJECT_DIR/venv/bin/python3"
-    else
-        PYTHON_PATH=$(which python3)
-    fi
-
-    # Create a wrapper script in the ActivityWatch directory
-    # ActivityWatch discovers watchers named aw-watcher-* in its directory
-    WRAPPER_SCRIPT="$AW_DIR/aw-watcher-enhanced"
-
-    cat > "$WRAPPER_SCRIPT" << EOF
-#!/bin/bash
-# ActivityWatch Enhanced Watcher wrapper
-# This script allows ActivityWatch to discover and manage this watcher
-
-export PYTHONPATH="${PROJECT_DIR}:\$PYTHONPATH"
-exec "${PYTHON_PATH}" -m aw_watcher_enhanced "\$@"
-EOF
-
-    chmod +x "$WRAPPER_SCRIPT"
-
-    if [[ -f "$WRAPPER_SCRIPT" ]]; then
-        success "Created wrapper script: $WRAPPER_SCRIPT"
-
-        # Update aw-qt.toml to include our watcher in autostart_modules
-        AW_QT_CONFIG="$HOME/Library/Application Support/activitywatch/aw-qt/aw-qt.toml"
-        if [[ -f "$AW_QT_CONFIG" ]]; then
-            # Check if our watcher is already in the config
-            if ! grep -q "aw-watcher-enhanced" "$AW_QT_CONFIG"; then
-                info "Adding aw-watcher-enhanced to aw-qt autostart modules..."
-                # Update or create autostart_modules line
-                cat > "$AW_QT_CONFIG" << 'TOML'
-[aw-qt]
-autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
-
-[aw-qt-testing]
-autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
-TOML
-                success "Updated aw-qt.toml with autostart configuration"
-            else
-                info "aw-watcher-enhanced already in aw-qt.toml"
-            fi
-        else
-            # Create the config file if it doesn't exist
-            mkdir -p "$(dirname "$AW_QT_CONFIG")"
-            cat > "$AW_QT_CONFIG" << 'TOML'
-[aw-qt]
-autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
-
-[aw-qt-testing]
-autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
-TOML
-            success "Created aw-qt.toml with autostart configuration"
-        fi
-
-        success "Tray integration complete!"
-        echo ""
-        echo "    NOTE: Restart ActivityWatch to see the watcher in the tray menu."
-        TRAY_INTEGRATED=true
-    else
-        error "Failed to create wrapper script. You may need to run with sudo."
-        TRAY_INTEGRATED=false
-    fi
     echo ""
 }
 
 # Request accessibility permissions
 request_permissions() {
     info "Checking accessibility permissions..."
-
-    # Check if Terminal has accessibility access
-    # This is required for window title capture on macOS
-
     echo ""
     echo "This app requires Accessibility permissions to capture window titles."
     echo ""
     echo "To grant permissions:"
-    echo "  1. Open System Preferences > Security & Privacy > Privacy"
-    echo "  2. Select 'Accessibility' in the left panel"
-    echo "  3. Click the lock icon and enter your password"
-    echo "  4. Add Terminal.app (or your terminal app) to the list"
+    echo "  1. Open System Settings > Privacy & Security > Accessibility"
+    echo "  2. Click the + button"
+    echo "  3. Add Terminal.app (or your terminal app) to the list"
     echo ""
 
     # Try to trigger the permission dialog
@@ -207,46 +103,132 @@ request_permissions() {
     echo ""
 }
 
-# Install Python package
+# Install Python package via pip
 install_package() {
     info "Installing aw-watcher-enhanced..."
 
-    # Check if we should create a virtual environment
-    if [[ "$USE_VENV" == "true" ]]; then
-        VENV_DIR="$PROJECT_DIR/venv"
-        if [[ ! -d "$VENV_DIR" ]]; then
-            info "Creating virtual environment..."
-            python3 -m venv "$VENV_DIR"
-        fi
-        source "$VENV_DIR/bin/activate"
-        success "Virtual environment activated"
+    # pip install with console_scripts creates an executable on PATH.
+    # aw-qt scans PATH for aw-* executables, so this is all we need
+    # for discovery. No wrapper scripts in the .app bundle required.
+    PIP_FLAGS="--break-system-packages"
+
+    # Check if --break-system-packages is supported (Python 3.11+)
+    if ! pip3 install --help 2>&1 | grep -q "break-system-packages"; then
+        PIP_FLAGS=""
     fi
 
-    # Install package with macOS dependencies
-    pip3 install -e "$PROJECT_DIR[macos,ocr]" --quiet
+    pip3 install -e "$PROJECT_DIR" $PIP_FLAGS --quiet 2>&1 || {
+        error "pip install failed. Trying without --break-system-packages..."
+        pip3 install -e "$PROJECT_DIR" --quiet
+    }
 
-    success "Package installed"
+    # Verify the executable is on PATH
+    if command -v aw-watcher-enhanced &> /dev/null; then
+        EXEC_PATH=$(command -v aw-watcher-enhanced)
+        success "Package installed: $EXEC_PATH"
+    else
+        warn "Package installed but aw-watcher-enhanced not found on PATH."
+        echo "    You may need to add pip's bin directory to your PATH."
+        echo "    Try: pip3 show aw-watcher-enhanced"
+    fi
     echo ""
 }
 
-# Create launchd plist
+# Register with aw-qt for autostart
+register_with_awqt() {
+    info "Registering with ActivityWatch..."
+
+    AW_QT_CONFIG="$HOME/Library/Application Support/activitywatch/aw-qt/aw-qt.toml"
+
+    if [[ -f "$AW_QT_CONFIG" ]]; then
+        if grep -q "aw-watcher-enhanced" "$AW_QT_CONFIG"; then
+            info "Already registered in aw-qt.toml"
+        else
+            info "Adding aw-watcher-enhanced to aw-qt autostart..."
+            # Read existing autostart_modules and append ours
+            # Simple approach: rewrite the config with our module added
+            cat > "$AW_QT_CONFIG" << 'TOML'
+[aw-qt]
+autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
+
+[aw-qt-testing]
+autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
+TOML
+            success "Updated aw-qt.toml"
+        fi
+    else
+        mkdir -p "$(dirname "$AW_QT_CONFIG")"
+        cat > "$AW_QT_CONFIG" << 'TOML'
+[aw-qt]
+autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
+
+[aw-qt-testing]
+autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
+TOML
+        success "Created aw-qt.toml"
+    fi
+
+    success "Registered with ActivityWatch (restart aw-qt to activate)"
+    echo ""
+}
+
+# Create default config
+create_config() {
+    info "Creating configuration..."
+
+    mkdir -p "$CONFIG_DIR"
+
+    if [[ ! -f "$CONFIG_DIR/config.yaml" ]]; then
+        cat > "$CONFIG_DIR/config.yaml" << 'EOF'
+# ActivityWatch Enhanced Watcher Configuration
+# See README.md for full documentation
+
+watcher:
+  poll_time: 5.0      # Seconds between checks
+  pulsetime: 6.0      # Heartbeat merge window
+
+ocr:
+  enabled: true
+  trigger: adaptive   # adaptive, smart, window_change, periodic
+  periodic_interval: 30
+  engine: auto
+  extract_mode: keywords
+  max_keywords: 20
+
+privacy:
+  exclude_apps:
+    - "1Password 7"
+    - "Keychain Access"
+    - "System Preferences"
+  exclude_titles:
+    - ".*[Pp]assword.*"
+    - ".*[Pp]rivate.*"
+  exclude_urls:
+    - ".*bank.*"
+
+categorization:
+  enabled: true
+  use_rag: true
+  client_keywords: {}
+EOF
+        success "Created default config: $CONFIG_DIR/config.yaml"
+    else
+        info "Config already exists: $CONFIG_DIR/config.yaml"
+    fi
+}
+
+# Create launchd plist (optional, for running independently of aw-qt)
 create_launchd_plist() {
     info "Creating launchd service..."
 
-    # Ensure LaunchAgents directory exists
     mkdir -p "$HOME/Library/LaunchAgents"
-
-    # Determine Python path
-    if [[ "$USE_VENV" == "true" ]]; then
-        PYTHON_PATH="$PROJECT_DIR/venv/bin/python3"
-    else
-        PYTHON_PATH=$(which python3)
-    fi
-
-    # Create log directory
     mkdir -p "$LOG_DIR"
 
-    # Create plist file
+    EXEC_PATH=$(command -v aw-watcher-enhanced)
+    if [[ -z "$EXEC_PATH" ]]; then
+        EXEC_PATH="$(python3 -c 'import sysconfig; print(sysconfig.get_path("scripts"))')/aw-watcher-enhanced"
+    fi
+
     cat > "$PLIST_PATH" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -257,21 +239,8 @@ create_launchd_plist() {
 
     <key>ProgramArguments</key>
     <array>
-        <string>${PYTHON_PATH}</string>
-        <string>-m</string>
-        <string>aw_watcher_enhanced</string>
+        <string>${EXEC_PATH}</string>
     </array>
-
-    <key>WorkingDirectory</key>
-    <string>${PROJECT_DIR}</string>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-        <key>PYTHONPATH</key>
-        <string>${PROJECT_DIR}</string>
-    </dict>
 
     <key>RunAtLoad</key>
     <true/>
@@ -306,69 +275,17 @@ EOF
 load_service() {
     info "Loading launchd service..."
 
-    # Unload if already loaded
     launchctl unload "$PLIST_PATH" 2>/dev/null || true
-
-    # Load the service
     launchctl load "$PLIST_PATH"
 
     success "Service loaded"
 
-    # Check if running
     sleep 2
     if launchctl list | grep -q "$PLIST_NAME"; then
         success "Service is running"
     else
         warn "Service may not have started. Check logs:"
         echo "    tail -f $LOG_DIR/aw-watcher-enhanced.log"
-    fi
-}
-
-# Create config directory and default config
-create_config() {
-    info "Creating configuration..."
-
-    mkdir -p "$CONFIG_DIR"
-
-    if [[ ! -f "$CONFIG_DIR/config.yaml" ]]; then
-        cat > "$CONFIG_DIR/config.yaml" << 'EOF'
-# ActivityWatch Enhanced Watcher Configuration
-# See README.md for full documentation
-
-watcher:
-  poll_time: 5.0      # Seconds between checks
-  pulsetime: 6.0      # Heartbeat merge window
-
-ocr:
-  enabled: true
-  trigger: window_change  # window_change, periodic, or both
-  periodic_interval: 30   # Seconds (if periodic)
-  engine: auto            # auto, tesseract
-  extract_mode: keywords  # keywords, entities, full_text
-  max_keywords: 20
-  # Multi-monitor support
-  capture_all_monitors: false  # Set to true for multi-monitor OCR
-
-privacy:
-  exclude_apps:
-    - "1Password 7"
-    - "Keychain Access"
-    - "System Preferences"
-  exclude_titles:
-    - ".*[Pp]assword.*"
-    - ".*[Pp]rivate.*"
-  exclude_urls:
-    - ".*bank.*"
-
-categorization:
-  enabled: true
-  use_rag: true  # Use RAG database for client detection
-  # Add custom client keywords here if needed
-  client_keywords: {}
-EOF
-        success "Created default config: $CONFIG_DIR/config.yaml"
-    else
-        info "Config already exists: $CONFIG_DIR/config.yaml"
     fi
 }
 
@@ -382,32 +299,15 @@ create_uninstall_script() {
 PLIST_NAME="com.dagtech.aw-watcher-enhanced"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 
-# ActivityWatch app locations
-AW_APP_PATHS=(
-    "/Applications/ActivityWatch.app"
-    "$HOME/Applications/ActivityWatch.app"
-)
-
 echo "Uninstalling ActivityWatch Enhanced Watcher..."
 
-# Stop and unload service
+# Stop and unload launchd service
 if [[ -f "$PLIST_PATH" ]]; then
     echo "Stopping service..."
     launchctl unload "$PLIST_PATH" 2>/dev/null || true
     rm "$PLIST_PATH"
     echo "Service removed."
 fi
-
-# Remove ActivityWatch tray integration
-for aw_path in "${AW_APP_PATHS[@]}"; do
-    WRAPPER_SCRIPT="$aw_path/Contents/MacOS/aw-watcher-enhanced"
-    if [[ -f "$WRAPPER_SCRIPT" ]]; then
-        echo "Removing ActivityWatch tray integration..."
-        rm -f "$WRAPPER_SCRIPT"
-        echo "Tray integration removed."
-        break
-    fi
-done
 
 # Ask about config removal
 read -p "Remove configuration files? (y/n): " remove_config
@@ -416,16 +316,18 @@ if [[ "$remove_config" == "y" ]]; then
     echo "Configuration removed."
 fi
 
-# Ask about package removal
+# Uninstall Python package (removes the executable from PATH)
 read -p "Uninstall Python package? (y/n): " remove_pkg
 if [[ "$remove_pkg" == "y" ]]; then
     pip3 uninstall -y aw-watcher-enhanced 2>/dev/null || true
-    echo "Package removed."
+    echo "Package uninstalled."
 fi
 
 echo ""
 echo "Uninstallation complete."
 echo "Note: ActivityWatch data (events) are stored separately and not removed."
+echo "You may want to remove aw-watcher-enhanced from aw-qt.toml:"
+echo "  $HOME/Library/Application Support/activitywatch/aw-qt/aw-qt.toml"
 EOF
     chmod +x "$UNINSTALL_SCRIPT"
 }
@@ -437,10 +339,16 @@ show_completion() {
     echo "   Installation Complete!"
     echo "============================================================"
     echo ""
+    echo "How it works:"
+    echo "  pip install created 'aw-watcher-enhanced' on PATH"
+    echo "  aw-qt discovers it automatically (no .app bundle changes)"
+    echo "  Survives ActivityWatch updates"
+    echo ""
     echo "Usage:"
     echo "  Run manually:    aw-watcher-enhanced"
     echo "  With verbose:    aw-watcher-enhanced --verbose"
     echo "  Without OCR:     aw-watcher-enhanced --no-ocr"
+    echo "  Daily summary:   aw-watcher-enhanced --summary"
     echo ""
 
     if [[ "$INSTALL_SERVICE" == "true" ]]; then
@@ -452,18 +360,10 @@ show_completion() {
         echo ""
     fi
 
-    if [[ "$TRAY_INTEGRATED" == "true" ]]; then
-        echo "Tray Integration:"
-        echo "  The watcher appears in the ActivityWatch tray menu."
-        echo "  Restart ActivityWatch if it doesn't appear immediately."
-        echo ""
-    fi
-
     echo "Configuration:"
     echo "  $CONFIG_DIR/config.yaml"
     echo ""
-    echo "Logs:"
-    echo "  $LOG_DIR/"
+    echo "Restart ActivityWatch to activate the watcher."
     echo ""
 }
 
@@ -471,10 +371,7 @@ show_completion() {
 main() {
     show_header
 
-    # Parse arguments
     INSTALL_SERVICE=false
-    USE_VENV=false
-    TRAY_INTEGRATED=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -482,17 +379,16 @@ main() {
                 INSTALL_SERVICE=true
                 shift
                 ;;
-            --venv|-v)
-                USE_VENV=true
-                shift
-                ;;
             --help|-h)
                 echo "Usage: $0 [options]"
                 echo ""
                 echo "Options:"
-                echo "  --service, -s    Install as launchd service (auto-start)"
-                echo "  --venv, -v       Create and use virtual environment"
+                echo "  --service, -s    Also install as launchd service (auto-start)"
                 echo "  --help, -h       Show this help message"
+                echo ""
+                echo "The standard installation uses pip install + aw-qt.toml."
+                echo "aw-qt discovers the watcher on PATH and manages its lifecycle."
+                echo "The --service option adds a launchd service as a fallback."
                 exit 0
                 ;;
             *)
@@ -502,30 +398,12 @@ main() {
         esac
     done
 
-    # Interactive mode if no arguments
-    if [[ "$INSTALL_SERVICE" == "false" ]]; then
-        read -p "Install as auto-starting service? (y/n): " response
-        if [[ "$response" == "y" ]]; then
-            INSTALL_SERVICE=true
-        fi
-    fi
-
-    if [[ "$USE_VENV" == "false" ]]; then
-        read -p "Create virtual environment? (y/n): " response
-        if [[ "$response" == "y" ]]; then
-            USE_VENV=true
-        fi
-    fi
-
-    # Run installation steps
     check_requirements
     request_permissions
     install_package
     create_config
+    register_with_awqt
     create_uninstall_script
-
-    # ActivityWatch tray integration
-    integrate_with_activitywatch
 
     if [[ "$INSTALL_SERVICE" == "true" ]]; then
         create_launchd_plist
@@ -535,5 +413,4 @@ main() {
     show_completion
 }
 
-# Run main
 main "$@"

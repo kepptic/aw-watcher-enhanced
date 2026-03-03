@@ -5,7 +5,7 @@ This guide covers installing aw-watcher-enhanced on macOS (Intel and Apple Silic
 ## Prerequisites
 
 - **macOS 11.0 (Big Sur) or later** (for Apple Vision OCR)
-- **Python 3.9+** (3.11 or 3.12 recommended)
+- **Python 3.9+** (3.11+ recommended)
 - **ActivityWatch** installed and running ([download](https://activitywatch.net/downloads/))
 - **Homebrew** (recommended for Python installation)
 
@@ -16,15 +16,47 @@ This guide covers installing aw-watcher-enhanced on macOS (Intel and Apple Silic
 git clone https://github.com/kepptic/aw-watcher-enhanced.git
 cd aw-watcher-enhanced
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# Install the package (creates aw-watcher-enhanced on PATH)
+pip3 install -e .
 
-# Install with macOS dependencies
-pip install -e ".[macos]"
+# Verify it's on PATH
+which aw-watcher-enhanced
 
 # Run the watcher
 aw-watcher-enhanced
+```
+
+That's it. `pip install` creates an `aw-watcher-enhanced` executable on PATH via the `[project.scripts]` entry point. aw-qt discovers it automatically.
+
+### Register with ActivityWatch
+
+Add `aw-watcher-enhanced` to aw-qt's autostart config:
+
+```bash
+# Edit the config
+nano ~/Library/Application\ Support/activitywatch/aw-qt/aw-qt.toml
+```
+
+```toml
+[aw-qt]
+autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
+
+[aw-qt-testing]
+autostart_modules = ["aw-server", "aw-watcher-afk", "aw-watcher-window", "aw-watcher-enhanced"]
+```
+
+Restart ActivityWatch. The watcher will appear in the tray menu and start automatically.
+
+> **Survives ActivityWatch updates**: Both the pip-installed executable and `aw-qt.toml` live outside the `.app` bundle. aw-qt finds watchers on PATH via its system module discovery — no wrapper scripts inside the bundle needed.
+
+### Using the Installer Script
+
+For a guided installation that handles everything:
+
+```bash
+cd installer/macos
+./install.sh             # Installs package + registers with aw-qt
+./install.sh --service   # Also creates a launchd service as fallback
 ```
 
 ## Detailed Installation
@@ -33,40 +65,28 @@ aw-watcher-enhanced
 
 ```bash
 # Using Homebrew (recommended)
-brew install python@3.12
+brew install python@3.13
 
 # Verify installation
 python3 --version  # Should be 3.9+
 ```
 
-### Step 2: Clone and Setup
+### Step 2: Clone and Install
 
 ```bash
 # Clone the repository
 git clone https://github.com/kepptic/aw-watcher-enhanced.git
 cd aw-watcher-enhanced
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# Install the package
+pip3 install -e .
 
-# Upgrade pip
-pip install --upgrade pip
+# Verify the executable is on PATH
+which aw-watcher-enhanced
+# Should show something like /opt/homebrew/bin/aw-watcher-enhanced
 ```
 
-### Step 3: Install Dependencies
-
-```bash
-# Install with macOS-specific dependencies
-pip install -e ".[macos]"
-```
-
-This installs:
-- `pyobjc-framework-Cocoa` - macOS window detection
-- `pyobjc-framework-Quartz` - Screen capture and idle detection
-- `ocrmac` - Apple Vision OCR (Neural Engine accelerated)
-
-### Step 4: Grant Permissions
+### Step 3: Grant Permissions
 
 macOS requires explicit permissions for accessibility and screen recording.
 
@@ -83,19 +103,25 @@ macOS requires explicit permissions for accessibility and screen recording.
 
 > **Note:** You may need to restart your terminal after granting permissions.
 
+### Step 4: Register with aw-qt
+
+Edit `~/Library/Application Support/activitywatch/aw-qt/aw-qt.toml` and add `aw-watcher-enhanced` to the `autostart_modules` list (see Quick Install above).
+
 ### Step 5: Verify Installation
 
 ```bash
-# Activate virtual environment
-source venv/bin/activate
-
 # Test the watcher
 aw-watcher-enhanced --verbose
 
 # You should see:
-# Using Apple Vision OCR (Neural Engine accelerated)
+# Initialized aw-watcher-enhanced
+# OCR enabled: True
 # Idle detection enabled
-# OCR diff detection enabled
+# Meeting detection enabled
+# Browser URL merging enabled
+
+# Test daily summary (requires ActivityWatch to be running)
+aw-watcher-enhanced --summary today
 ```
 
 ## Optional: LLM Enhancement (Ollama)
@@ -145,62 +171,64 @@ docker run -d --name qdrant \
 
 ## Running as a Service (launchd)
 
-To start automatically on login:
-
-### Create Launch Agent
+The installer script can set up a launchd service:
 
 ```bash
-# Create the plist file
-cat > ~/Library/LaunchAgents/net.activitywatch.aw-watcher-enhanced.plist << 'EOF'
+./installer/macos/install.sh --service
+```
+
+Or manually:
+
+```bash
+# Create the plist
+cat > ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>net.activitywatch.aw-watcher-enhanced</string>
+    <string>com.dagtech.aw-watcher-enhanced</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/path/to/your/venv/bin/aw-watcher-enhanced</string>
+        <string>$(which aw-watcher-enhanced)</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/aw-watcher-enhanced.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/aw-watcher-enhanced.err</string>
-    <key>EnvironmentVariables</key>
     <dict>
-        <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+        <key>Crashed</key>
+        <true/>
     </dict>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>$HOME/Library/Logs/activitywatch/aw-watcher-enhanced.log</string>
+    <key>StandardErrorPath</key>
+    <string>$HOME/Library/Logs/activitywatch/aw-watcher-enhanced.error.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
 </dict>
 </plist>
 EOF
 
-# Update the path to your venv
-# Then load the service
-launchctl load ~/Library/LaunchAgents/net.activitywatch.aw-watcher-enhanced.plist
+# Load it
+launchctl load ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
 ```
 
 ### Service Management
 
 ```bash
-# Start
-launchctl start net.activitywatch.aw-watcher-enhanced
-
-# Stop
-launchctl stop net.activitywatch.aw-watcher-enhanced
-
-# Unload (disable)
-launchctl unload ~/Library/LaunchAgents/net.activitywatch.aw-watcher-enhanced.plist
-
 # Check status
 launchctl list | grep aw-watcher
 
+# Stop
+launchctl unload ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
+
+# Start
+launchctl load ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
+
 # View logs
-tail -f /tmp/aw-watcher-enhanced.log
+tail -f ~/Library/Logs/activitywatch/aw-watcher-enhanced.log
 ```
 
 ## Configuration
@@ -227,9 +255,15 @@ smart_capture:
 
 ocr:
   enabled: true
-  trigger: smart
-  engine: auto  # Uses Apple Vision automatically
-  extract_mode: full_text
+  trigger: adaptive     # Only fires OCR when primary data is thin
+  engine: auto          # Uses Apple Vision automatically
+
+browser:
+  enabled: true         # Merge URL data from aw-watcher-web
+
+meeting:
+  enabled: true
+  detect_subprocess: true
 
 llm:
   enabled: true
@@ -258,8 +292,8 @@ privacy:
 - Check that Apple Vision is available: `python3 -c "from ocrmac import ocrmac; print('OK')"`
 
 ### High CPU usage
+- The default `adaptive` OCR trigger minimizes unnecessary captures
 - Increase `poll_time` to 10.0 or higher
-- Set `ocr.trigger` to `window_change` instead of `smart`
 - Disable LLM if not needed: `--no-llm`
 
 ### Ollama not connecting
@@ -267,12 +301,17 @@ privacy:
 - Check if model is pulled: `ollama list`
 - Test connection: `curl http://localhost:11434/api/tags`
 
-### Permission denied for Python
-If using a system Python, consider using pyenv or Homebrew Python instead.
+### Watcher not showing in aw-qt tray
+- Verify the executable is on PATH: `which aw-watcher-enhanced`
+- Verify aw-qt.toml has it in `autostart_modules`
+- Restart ActivityWatch completely (quit + reopen)
+
+### Permission denied for pip install
+If using system Python on macOS 14+, use `--break-system-packages` or install via Homebrew Python.
 
 ## Performance on Apple Silicon
 
-On M1/M2/M3 Macs, the watcher is highly optimized:
+On M1/M2/M3/M4 Macs, the watcher is highly optimized:
 
 | Component | Performance |
 |-----------|-------------|
@@ -284,15 +323,15 @@ On M1/M2/M3 Macs, the watcher is highly optimized:
 ## Uninstallation
 
 ```bash
-# Stop the service
-launchctl unload ~/Library/LaunchAgents/net.activitywatch.aw-watcher-enhanced.plist
+# Uninstall the package (removes executable from PATH)
+pip3 uninstall aw-watcher-enhanced
 
-# Remove the plist
-rm ~/Library/LaunchAgents/net.activitywatch.aw-watcher-enhanced.plist
-
-# Remove the package
-pip uninstall aw-watcher-enhanced
+# Remove launchd service (if installed)
+launchctl unload ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
+rm ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
 
 # Remove config (optional)
 rm -rf ~/Library/Application\ Support/activitywatch/aw-watcher-enhanced
+
+# Remove aw-watcher-enhanced from aw-qt.toml autostart_modules
 ```

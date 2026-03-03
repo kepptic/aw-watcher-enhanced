@@ -143,6 +143,154 @@ def _get_app_via_wmi(pid: int) -> str:
     return "unknown"
 
 
+def _walk_ax_parent_chain(element, max_depth: int = 5) -> str:
+    """Walk the AX parent chain to build a breadcrumb context string.
+
+    E.g. "Terminal > zsh" or "VS Code > Editor > main.py"
+    """
+    try:
+        from HIServices import AXUIElementCopyAttributeValue
+    except ImportError:
+        return ""
+
+    parts = []
+    current = element
+    for _ in range(max_depth):
+        err, title = AXUIElementCopyAttributeValue(current, "AXTitle", None)
+        if err == 0 and title:
+            title_str = str(title).strip()
+            if title_str and title_str not in parts:
+                parts.append(title_str)
+
+        err, role_desc = AXUIElementCopyAttributeValue(current, "AXRoleDescription", None)
+        if err == 0 and role_desc:
+            desc_str = str(role_desc).strip()
+            # Only add role descriptions that are informative
+            if desc_str and desc_str not in parts and desc_str not in (
+                "application", "window", "group", "scroll area",
+            ):
+                parts.append(desc_str)
+
+        err, parent = AXUIElementCopyAttributeValue(current, "AXParent", None)
+        if err != 0 or not parent:
+            break
+        current = parent
+
+    # Reverse so parent comes first
+    parts.reverse()
+    return " > ".join(parts) if parts else ""
+
+
+def _get_focused_element_details() -> Dict[str, str]:
+    """Get details about the currently focused UI element using AXFocusedUIElement.
+
+    Returns a dict with focused_element_role, focused_element_title,
+    focused_element_description, and focused_element_context.
+    """
+    try:
+        from HIServices import (
+            AXUIElementCopyAttributeValue,
+            AXUIElementCreateSystemWide,
+        )
+    except ImportError:
+        return {}
+
+    try:
+        system_wide = AXUIElementCreateSystemWide()
+        err, focused_element = AXUIElementCopyAttributeValue(
+            system_wide, "AXFocusedUIElement", None
+        )
+        if err != 0 or not focused_element:
+            return {}
+
+        result = {}
+
+        # Role (e.g. "AXTextField", "AXTextArea", "AXButton")
+        err, role = AXUIElementCopyAttributeValue(focused_element, "AXRole", None)
+        if err == 0 and role:
+            result["focused_element_role"] = str(role)
+
+        # Role description (e.g. "text field", "button", "tab")
+        err, role_desc = AXUIElementCopyAttributeValue(
+            focused_element, "AXRoleDescription", None
+        )
+        if err == 0 and role_desc:
+            result["focused_element_title"] = str(role_desc)
+
+        # Title of the focused element
+        err, title = AXUIElementCopyAttributeValue(focused_element, "AXTitle", None)
+        if err == 0 and title:
+            title_str = str(title).strip()
+            if title_str:
+                result["focused_element_title"] = title_str
+
+        # Description (accessibility description)
+        err, desc = AXUIElementCopyAttributeValue(
+            focused_element, "AXDescription", None
+        )
+        if err == 0 and desc:
+            desc_str = str(desc).strip()
+            if desc_str:
+                result["focused_element_description"] = desc_str
+
+        # Build context breadcrumb from parent chain
+        context = _walk_ax_parent_chain(focused_element)
+        if context:
+            result["focused_element_context"] = context
+
+        return result
+
+    except Exception as e:
+        logger.debug(f"AXFocusedUIElement error: {e}")
+        return {}
+
+
+def _get_focused_app_ax() -> Optional[Dict[str, str]]:
+    """Get focused application and window title using system-wide Accessibility API."""
+    try:
+        from HIServices import (
+            AXUIElementCopyAttributeValue,
+            AXUIElementCreateSystemWide,
+        )
+    except ImportError:
+        return None
+
+    try:
+        system_wide = AXUIElementCreateSystemWide()
+        err, focused_app = AXUIElementCopyAttributeValue(
+            system_wide, "AXFocusedApplication", None
+        )
+        if err != 0 or not focused_app:
+            return None
+
+        # Get app name
+        err, app_name = AXUIElementCopyAttributeValue(focused_app, "AXTitle", None)
+        app = str(app_name) if err == 0 and app_name else ""
+
+        # Get focused window title
+        title = ""
+        err, focused_window = AXUIElementCopyAttributeValue(
+            focused_app, "AXFocusedWindow", None
+        )
+        if err == 0 and focused_window:
+            err, win_title = AXUIElementCopyAttributeValue(
+                focused_window, "AXTitle", None
+            )
+            if err == 0 and win_title:
+                title = str(win_title)
+
+        if app:
+            return {"app": app, "title": title}
+        return None
+    except Exception as e:
+        logger.debug(f"System-wide Accessibility API error: {e}")
+        return None
+
+
+# System processes that should not be reported as the active app
+_SYSTEM_APPS = frozenset({"loginwindow", "loginwindow.app", "SecurityAgent"})
+
+
 def _get_window_macos() -> Optional[Dict[str, str]]:
     """macOS implementation using Accessibility API and mouse position for multi-monitor."""
     try:
@@ -152,20 +300,34 @@ def _get_window_macos() -> Optional[Dict[str, str]]:
         return None
 
     try:
-        # First, check window under mouse cursor (better for multi-monitor)
+        # Primary: Use system-wide Accessibility API (most reliable)
+        ax_result = _get_focused_app_ax()
+        if ax_result and ax_result.get("app") not in _SYSTEM_APPS:
+            # Enrich with focused UI element details
+            focused_details = _get_focused_element_details()
+            if focused_details:
+                ax_result.update(focused_details)
+            return ax_result
+
+        # Secondary: Check window under mouse cursor (useful for multi-monitor)
         window_under_cursor = _get_window_under_cursor()
 
-        # Get frontmost app as fallback
+        # Tertiary: Get frontmost app via NSWorkspace
         workspace = NSWorkspace.sharedWorkspace()
         active_app = workspace.frontmostApplication()
 
         if not active_app:
-            if window_under_cursor:
+            if window_under_cursor and window_under_cursor.get("app") not in _SYSTEM_APPS:
                 return window_under_cursor
             return {"app": "unknown", "title": ""}
 
         app = active_app.localizedName() or "unknown"
         app_pid = active_app.processIdentifier()
+
+        # If NSWorkspace returns a system app, prefer window under cursor
+        if app in _SYSTEM_APPS:
+            if window_under_cursor and window_under_cursor.get("app") not in _SYSTEM_APPS:
+                return window_under_cursor
 
         # If window under cursor is different app, prefer that (multi-monitor case)
         if window_under_cursor and window_under_cursor.get("app") != app:
@@ -180,7 +342,14 @@ def _get_window_macos() -> Optional[Dict[str, str]]:
         if not title:
             title = _get_window_title_cgwindow(app_pid)
 
-        return {"app": app, "title": title}
+        result = {"app": app, "title": title}
+
+        # Enrich with focused UI element details (deep AX querying)
+        focused_details = _get_focused_element_details()
+        if focused_details:
+            result.update(focused_details)
+
+        return result
 
     except Exception as e:
         logger.error(f"Error getting window (macOS): {e}")

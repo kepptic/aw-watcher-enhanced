@@ -49,11 +49,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "ocr": {
         "enabled": True,
-        "trigger": "smart",  # "window_change", "periodic", "both", or "smart"
+        "trigger": "adaptive",  # "adaptive", "smart", "window_change", "periodic", "both"
         "periodic_interval": 30,  # seconds between OCR when same window
+        "adaptive_fallback_interval": 300,  # 5min safety-net OCR in adaptive mode
         "engine": "auto",  # "auto", "apple_vision", "windows", "rapidocr", "tesseract"
         "extract_mode": "keywords",  # "keywords", "entities", "full_text"
         "max_keywords": 20,
+        "transition_capture": True,  # Capture incoming window after a switch
     },
     "llm": {
         "model": "gemma3:4b",
@@ -61,8 +63,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "enabled": True,
     },
     "browser": {
-        "enabled": False,  # Requires browser extension
+        "enabled": True,
         "merge_with_window": True,
+        "bucket_refresh_interval": 300,
+    },
+    "meeting": {
+        "enabled": True,
+        "detect_subprocess": True,
     },
     "privacy": {
         "exclude_apps": [

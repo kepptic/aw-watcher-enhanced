@@ -9,6 +9,7 @@ Features:
 - Efficient resource usage
 """
 
+import collections
 import hashlib
 import logging
 import queue
@@ -233,11 +234,12 @@ class OCRDiffDetector:
 
 
 class IdleDetector:
-    """Detect user idle time (no mouse/keyboard activity)."""
+    """Detect user idle time and track activity percentage."""
 
     def __init__(self):
         self._last_activity = time.time()
         self._idle_threshold = 60  # seconds
+        self._activity_samples: collections.deque = collections.deque(maxlen=300)
         self._setup_platform()
 
     def _setup_platform(self):
@@ -302,6 +304,35 @@ class IdleDetector:
     def set_threshold(self, seconds: float):
         """Set idle threshold in seconds."""
         self._idle_threshold = seconds
+
+    def record_activity_sample(self):
+        """Record whether user is currently active (idle < 1s).
+
+        Call this every poll cycle to build activity history.
+        """
+        idle_secs = self.get_idle_seconds()
+        is_active = idle_secs < 1.0
+        self._activity_samples.append((time.time(), is_active))
+
+    def get_activity_percentage(self, window_seconds: float = 300.0) -> float:
+        """Get percentage of time user was active over the given window.
+
+        Args:
+            window_seconds: How far back to look (default 5 minutes).
+
+        Returns:
+            0.0-100.0 float representing activity percentage.
+        """
+        if not self._activity_samples:
+            return 0.0
+
+        cutoff = time.time() - window_seconds
+        relevant = [active for ts, active in self._activity_samples if ts >= cutoff]
+
+        if not relevant:
+            return 0.0
+
+        return (sum(relevant) / len(relevant)) * 100.0
 
 
 class ProcessingQueue:

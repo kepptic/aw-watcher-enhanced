@@ -89,9 +89,13 @@ Add-WindowsCapability -Online -Name "Language.OCR~~~en-US~0.0.1.0"
 aw-watcher-enhanced --verbose
 
 # You should see:
-# Using Windows OCR API (built-in)
+# Initialized aw-watcher-enhanced
+# OCR enabled: True
 # Idle detection enabled
-# OCR diff detection enabled
+# Meeting detection enabled
+
+# Test daily summary (requires ActivityWatch running)
+aw-watcher-enhanced --summary today
 ```
 
 ## Optional: RapidOCR (Better Accuracy)
@@ -233,9 +237,15 @@ smart_capture:
 
 ocr:
   enabled: true
-  trigger: smart
-  engine: auto  # Uses Windows OCR API
-  extract_mode: full_text
+  trigger: adaptive     # Only fires OCR when primary data is thin
+  engine: auto          # Uses Windows OCR API
+
+browser:
+  enabled: true         # Merge URL data from aw-watcher-web
+
+meeting:
+  enabled: true
+  detect_subprocess: true
 
 llm:
   enabled: false  # Set to true if Ollama is installed
@@ -354,16 +364,35 @@ cd ..
 Remove-Item -Recurse -Force aw-watcher-enhanced
 ```
 
+## CLI Tools
+
+```powershell
+# Daily summary
+aw-watcher-enhanced --summary                # Today
+aw-watcher-enhanced --summary yesterday      # Yesterday
+aw-watcher-enhanced --summary 2026-03-01     # Specific date
+aw-watcher-enhanced --summary today --summary-format json
+
+# Retroactive reclassification
+aw-watcher-enhanced --reclassify --start 2026-03-01 --end 2026-03-03 --dry-run
+aw-watcher-enhanced --reclassify --start 2026-03-01 --end 2026-03-03
+```
+
 ## Running Without LLM
 
 The watcher works perfectly fine without LLM enhancement. You'll still get:
 - Window tracking (app, title)
-- OCR text extraction
-- Keyword extraction
-- Entity detection (emails, URLs, dates)
-- Idle detection
+- Deep accessibility element info (focused UI element, parent chain)
+- Browser URL merging (from aw-watcher-web)
+- Meeting detection (Zoom, Teams, Meet, etc.)
+- Context-switch metrics (focus duration, switches per hour)
+- Activity level tracking (mouse/keyboard activity percentage)
+- OCR text extraction with adaptive triggering
+- Keyword and entity extraction
+- Idle detection and adaptive polling
 - Remote desktop support
-- Privacy filtering
+- Privacy filtering and PII redaction
+- 150+ automatic categorization rules
 
 LLM adds intelligent extraction of:
 - Document names

@@ -122,7 +122,7 @@ class TestDefaultConfig:
 
     def test_default_ocr_trigger(self):
         """Test default OCR trigger."""
-        assert DEFAULT_CONFIG["ocr"]["trigger"] == "window_change"
+        assert DEFAULT_CONFIG["ocr"]["trigger"] == "adaptive"
 
     def test_default_exclude_apps(self):
         """Test default excluded apps include password managers."""
