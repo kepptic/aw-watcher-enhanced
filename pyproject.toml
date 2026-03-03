@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MPL-2.0"}
 authors = [
-    {name = "DAG Tech"}
+    {name = "Kepptic"}
 ]
 keywords = ["activitywatch", "time-tracking", "productivity", "ocr"]
 classifiers = [

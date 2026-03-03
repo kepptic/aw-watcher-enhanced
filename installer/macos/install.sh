@@ -31,7 +31,7 @@ NC='\033[0m' # No Color
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
-PLIST_NAME="com.dagtech.aw-watcher-enhanced"
+PLIST_NAME="com.kepptic.aw-watcher-enhanced"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 LOG_DIR="$HOME/Library/Logs/activitywatch"
 CONFIG_DIR="$HOME/Library/Application Support/activitywatch/aw-watcher-enhanced"
@@ -296,7 +296,7 @@ create_uninstall_script() {
 #!/bin/bash
 # Uninstall aw-watcher-enhanced from macOS
 
-PLIST_NAME="com.dagtech.aw-watcher-enhanced"
+PLIST_NAME="com.kepptic.aw-watcher-enhanced"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 
 echo "Uninstalling ActivityWatch Enhanced Watcher..."

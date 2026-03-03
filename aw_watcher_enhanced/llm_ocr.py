@@ -69,7 +69,7 @@ Examples:
 Text: [TITLE BAR: Project Budget.xlsx] CLIENT: Acme Inc Total: $50,000
 Answer: {{"document": "Project Budget.xlsx", "client": "Acme Inc", "project": null, "keywords": ["budget", "finance"]}}
 
-Text: [TITLE BAR: Resource Planner.xlsx] DAG Tech BILL OF MATERIALS CLIENT: SWTLNE01 Total Labor $24,400
+Text: [TITLE BAR: Resource Planner.xlsx] Kepptic BILL OF MATERIALS CLIENT: SWTLNE01 Total Labor $24,400
 Answer: {{"document": "Resource Planner.xlsx", "client": "SWTLNE01", "project": null, "keywords": ["resource", "labor", "billing"]}}
 
 Text: [TITLE BAR: Pitch Outline.docx - Word] Client Code: KHHTH01 Project Title: Slack to Microsoft Teams Migration
@@ -78,11 +78,11 @@ Answer: {{"document": "Pitch Outline.docx", "client": "KHHTH01", "project": "Sla
 Text: [TITLE BAR: main.py - aw-watcher-enhanced - Visual Studio Code] def capture_screen(): import mss git commit -m "Add OCR"
 Answer: {{"document": "main.py", "client": null, "project": "aw-watcher-enhanced", "keywords": ["python", "ocr", "screen capture"]}}
 
-Text: [TITLE BAR: Terminal - zsh] cd ~/dagtech/acme-portal npm run build Successfully compiled 147 modules
+Text: [TITLE BAR: Terminal - zsh] cd ~/kepptic/acme-portal npm run build Successfully compiled 147 modules
 Answer: {{"document": "Terminal", "client": "Acme", "project": "acme-portal", "keywords": ["build", "npm", "terminal"]}}
 
-Text: [TITLE BAR: PR #42 - dagtech/meridian-migration - GitHub] https://github.com/dagtech/meridian-migration/pull/42 feat: add SSO integration Files changed: 12
-Answer: {{"document": "GitHub PR #42", "client": "Meridian", "project": "meridian-migration", "url": "https://github.com/dagtech/meridian-migration/pull/42", "keywords": ["github", "sso", "pull request"]}}
+Text: [TITLE BAR: PR #42 - kepptic/meridian-migration - GitHub] https://github.com/kepptic/meridian-migration/pull/42 feat: add SSO integration Files changed: 12
+Answer: {{"document": "GitHub PR #42", "client": "Meridian", "project": "meridian-migration", "url": "https://github.com/kepptic/meridian-migration/pull/42", "keywords": ["github", "sso", "pull request"]}}
 
 Text: [TITLE BAR: Jira - ACME-1234] Implement SSO for enterprise customers Status: In Progress Assignee: Greg
 Answer: {{"document": "ACME-1234", "client": "Acme", "project": "SSO Implementation", "keywords": ["jira", "sso", "enterprise"]}}
@@ -93,8 +93,8 @@ Answer: {{"document": "Slack", "client": "Meridian Health", "project": "migratio
 Text: [TITLE BAR: AWS Console] EC2 > Instances i-0abc123 nexgen-prod-api running t3.large
 Answer: {{"document": "AWS EC2", "client": "NexGen", "project": "nexgen-prod-api", "keywords": ["aws", "ec2", "infrastructure"]}}
 
-Text: [TITLE BAR: Google Workspace | Admin - DAG Tech] https://dagtech.huducloud.com/passwords/google-workspace-admin Companies / RGCENG01 / Passwords / Website - Admin administrator@rgce.com
-Answer: {{"document": "Hudu - Google Workspace Admin", "client": "RGCENG01", "project": "Password Management", "url": "https://dagtech.huducloud.com/passwords/google-workspace-admin", "breadcrumb": "Companies / RGCENG01 / Passwords / Website - Admin", "keywords": ["hudu", "passwords", "google workspace"]}}
+Text: [TITLE BAR: Google Workspace | Admin - Kepptic] https://kepptic.huducloud.com/passwords/google-workspace-admin Companies / RGCENG01 / Passwords / Website - Admin administrator@rgce.com
+Answer: {{"document": "Hudu - Google Workspace Admin", "client": "RGCENG01", "project": "Password Management", "url": "https://kepptic.huducloud.com/passwords/google-workspace-admin", "breadcrumb": "Companies / RGCENG01 / Passwords / Website - Admin", "keywords": ["hudu", "passwords", "google workspace"]}}
 
 Text: [TITLE BAR: ConnectWise Manage] Service Ticket #847234 ACME Corp - Server offline Priority: Critical Assigned: Greg
 Answer: {{"document": "Ticket #847234", "client": "ACME Corp", "project": "Server offline", "keywords": ["connectwise", "ticket", "critical"]}}

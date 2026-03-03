@@ -272,10 +272,10 @@ class RAGClient:
         Detect client code from a domain name.
 
         Args:
-            domain: Domain name (e.g., "dagtech.com")
+            domain: Domain name (e.g., "kepptic.com")
 
         Returns:
-            Client code (e.g., "DAGTECH01") or None
+            Client code (e.g., "KEPPTIC01") or None
         """
         if not domain:
             return None
@@ -308,7 +308,7 @@ class RAGClient:
         Detect client code from an email address.
 
         Args:
-            email: Email address (e.g., "user@dagtech.com")
+            email: Email address (e.g., "user@kepptic.com")
 
         Returns:
             Client code or None
@@ -397,7 +397,7 @@ class RAGClient:
         Get full client information by code.
 
         Args:
-            client_code: Client code (e.g., "DAGTECH01")
+            client_code: Client code (e.g., "KEPPTIC01")
 
         Returns:
             Client data dictionary or None

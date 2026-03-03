@@ -25,7 +25,7 @@ Or with options:
 1. **Python Package**: `aw-watcher-enhanced` with macOS dependencies
 2. **Configuration**: `~/Library/Application Support/activitywatch/aw-watcher-enhanced/config.yaml`
 3. **Logs**: `~/Library/Logs/activitywatch/`
-4. **LaunchAgent** (optional): `~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist`
+4. **LaunchAgent** (optional): `~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist`
 
 ## Permissions Required
 
@@ -79,24 +79,24 @@ tail -f ~/Library/Logs/activitywatch/aw-watcher-enhanced.error.log
 
 ### Stop Service
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
+launchctl unload ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
 ```
 
 ### Start Service
 ```bash
-launchctl load ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
+launchctl load ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
 ```
 
 ### Restart Service
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
-launchctl load ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
+launchctl unload ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
+launchctl load ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
 ```
 
 ### Remove Service
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
-rm ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
+launchctl unload ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
+rm ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
 ```
 
 ## Multi-Monitor Support
@@ -119,7 +119,7 @@ ocr:
 The watcher automatically integrates with your RAG database for client detection. It looks for the database at:
 
 ```
-~/Library/CloudStorage/Dropbox/Documents++/Work documents/DAG Tech/Time Tracking/AW-Watcher Logs/cache/
+~/Library/CloudStorage/Dropbox/Documents++/Work documents/Kepptic/Time Tracking/AW-Watcher Logs/cache/
 ```
 
 Features:
@@ -210,8 +210,8 @@ ls ~/Library/CloudStorage/Dropbox/Documents++/Work\ documents/DAG\ Tech/Time\ Tr
 Or manually:
 ```bash
 # Stop and remove service
-launchctl unload ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
-rm ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
+launchctl unload ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
+rm ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
 
 # Remove config (optional)
 rm -rf ~/Library/Application\ Support/activitywatch/aw-watcher-enhanced

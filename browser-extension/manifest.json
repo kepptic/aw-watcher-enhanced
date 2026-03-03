@@ -3,7 +3,7 @@
   "name": "ActivityWatch Enhanced",
   "version": "0.1.0",
   "description": "Enhanced ActivityWatch browser tracking with URL capture and page content analysis",
-  "author": "DAG Tech",
+  "author": "Kepptic",
 
   "permissions": [
     "tabs",

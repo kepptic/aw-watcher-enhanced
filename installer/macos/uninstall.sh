@@ -10,7 +10,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-PLIST_NAME="com.dagtech.aw-watcher-enhanced"
+PLIST_NAME="com.kepptic.aw-watcher-enhanced"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 CONFIG_DIR="$HOME/Library/Application Support/activitywatch/aw-watcher-enhanced"
 LOG_DIR="$HOME/Library/Logs/activitywatch"

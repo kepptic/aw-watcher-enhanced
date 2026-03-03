@@ -181,13 +181,13 @@ Or manually:
 
 ```bash
 # Create the plist
-cat > ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist << EOF
+cat > ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.dagtech.aw-watcher-enhanced</string>
+    <string>com.kepptic.aw-watcher-enhanced</string>
     <key>ProgramArguments</key>
     <array>
         <string>$(which aw-watcher-enhanced)</string>
@@ -212,7 +212,7 @@ cat > ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist << EOF
 EOF
 
 # Load it
-launchctl load ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
+launchctl load ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
 ```
 
 ### Service Management
@@ -222,10 +222,10 @@ launchctl load ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
 launchctl list | grep aw-watcher
 
 # Stop
-launchctl unload ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
+launchctl unload ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
 
 # Start
-launchctl load ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
+launchctl load ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
 
 # View logs
 tail -f ~/Library/Logs/activitywatch/aw-watcher-enhanced.log
@@ -327,8 +327,8 @@ On M1/M2/M3/M4 Macs, the watcher is highly optimized:
 pip3 uninstall aw-watcher-enhanced
 
 # Remove launchd service (if installed)
-launchctl unload ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
-rm ~/Library/LaunchAgents/com.dagtech.aw-watcher-enhanced.plist
+launchctl unload ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
+rm ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
 
 # Remove config (optional)
 rm -rf ~/Library/Application\ Support/activitywatch/aw-watcher-enhanced
