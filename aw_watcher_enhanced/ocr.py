@@ -208,29 +208,34 @@ def _get_monitor_under_cursor_macos(sct) -> Optional[Dict[str, int]]:
     """Get the monitor under the mouse cursor on macOS."""
     try:
         from AppKit import NSEvent, NSScreen
+        from Foundation import NSAutoreleasePool
 
-        # Get mouse position in Cocoa coordinates (origin bottom-left)
-        mouse_ns = NSEvent.mouseLocation()
+        pool = NSAutoreleasePool.alloc().init()
+        try:
+            # Get mouse position in Cocoa coordinates (origin bottom-left)
+            mouse_ns = NSEvent.mouseLocation()
 
-        # Get screens and find which one contains the cursor
-        screens = NSScreen.screens()
-        if not screens:
+            # Get screens and find which one contains the cursor
+            screens = NSScreen.screens()
+            if not screens:
+                return None
+
+            primary_height = screens[0].frame().size.height
+
+            for i, screen in enumerate(screens):
+                frame = screen.frame()
+                if (
+                    frame.origin.x <= mouse_ns.x <= frame.origin.x + frame.size.width
+                    and frame.origin.y <= mouse_ns.y <= frame.origin.y + frame.size.height
+                ):
+                    # Found the screen - now get the corresponding mss monitor
+                    # mss monitors are 1-indexed (0 is virtual all-monitors)
+                    if i + 1 < len(sct.monitors):
+                        return sct.monitors[i + 1]
+
             return None
-
-        primary_height = screens[0].frame().size.height
-
-        for i, screen in enumerate(screens):
-            frame = screen.frame()
-            if (
-                frame.origin.x <= mouse_ns.x <= frame.origin.x + frame.size.width
-                and frame.origin.y <= mouse_ns.y <= frame.origin.y + frame.size.height
-            ):
-                # Found the screen - now get the corresponding mss monitor
-                # mss monitors are 1-indexed (0 is virtual all-monitors)
-                if i + 1 < len(sct.monitors):
-                    return sct.monitors[i + 1]
-
-        return None
+        finally:
+            del pool
     except ImportError:
         logger.debug("AppKit not available for macOS cursor detection")
         return None
@@ -248,6 +253,7 @@ def _get_active_window_bounds_macos(sct) -> Optional[Dict[str, int]]:
     """
     try:
         from AppKit import NSWorkspace
+        from Foundation import NSAutoreleasePool
         from Quartz import (
             CGWindowListCopyWindowInfo,
             kCGNullWindowID,
@@ -255,32 +261,36 @@ def _get_active_window_bounds_macos(sct) -> Optional[Dict[str, int]]:
             kCGWindowListOptionOnScreenOnly,
         )
 
-        # Get the frontmost application
-        workspace = NSWorkspace.sharedWorkspace()
-        active_app = workspace.frontmostApplication()
+        pool = NSAutoreleasePool.alloc().init()
+        try:
+            # Get the frontmost application
+            workspace = NSWorkspace.sharedWorkspace()
+            active_app = workspace.frontmostApplication()
 
-        if not active_app:
+            if not active_app:
+                return None
+
+            app_pid = active_app.processIdentifier()
+
+            # Get window list
+            options = kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements
+            window_list = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+
+            # Find the frontmost window of the active app
+            for window in window_list:
+                if window.get("kCGWindowOwnerPID") == app_pid:
+                    bounds = window.get("kCGWindowBounds", {})
+                    if bounds:
+                        return {
+                            "left": int(bounds.get("X", 0)),
+                            "top": int(bounds.get("Y", 0)),
+                            "width": int(bounds.get("Width", 800)),
+                            "height": int(bounds.get("Height", 600)),
+                        }
+
             return None
-
-        app_pid = active_app.processIdentifier()
-
-        # Get window list
-        options = kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements
-        window_list = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
-
-        # Find the frontmost window of the active app
-        for window in window_list:
-            if window.get("kCGWindowOwnerPID") == app_pid:
-                bounds = window.get("kCGWindowBounds", {})
-                if bounds:
-                    return {
-                        "left": int(bounds.get("X", 0)),
-                        "top": int(bounds.get("Y", 0)),
-                        "width": int(bounds.get("Width", 800)),
-                        "height": int(bounds.get("Height", 600)),
-                    }
-
-        return None
+        finally:
+            del pool
 
     except ImportError:
         logger.debug("PyObjC not available for macOS window bounds")
@@ -334,6 +344,13 @@ def capture_all_monitors() -> List[Any]:
                 del screenshot
     except Exception as e:
         logger.error(f"Multi-monitor capture failed: {e}")
+        # Clean up any images captured before the failure
+        for img in images:
+            try:
+                img.close()
+            except Exception:
+                pass
+        images.clear()
 
     return images
 
@@ -365,9 +382,7 @@ class TieredCaptureManager:
         self._last_full_capture = 0
         self._last_window_id = None
 
-        # Cache for full capture result
-        self._full_capture_cache = None
-        self._full_capture_ocr_cache = None
+        # No image caching — images are large and must be consumed immediately
 
     def get_capture_mode(self, window_changed: bool = False) -> str:
         """
@@ -656,35 +671,39 @@ def _detect_barcodes_vision(image_path: str) -> List[str]:
     try:
         import Quartz
         import Vision
-        from Foundation import NSURL
+        from Foundation import NSAutoreleasePool, NSURL
 
-        # Load image
-        image_url = NSURL.fileURLWithPath_(image_path)
-        image_source = Quartz.CGImageSourceCreateWithURL(image_url, None)
-        if not image_source:
-            return []
+        pool = NSAutoreleasePool.alloc().init()
+        try:
+            # Load image
+            image_url = NSURL.fileURLWithPath_(image_path)
+            image_source = Quartz.CGImageSourceCreateWithURL(image_url, None)
+            if not image_source:
+                return []
 
-        cg_image = Quartz.CGImageSourceCreateImageAtIndex(image_source, 0, None)
-        if not cg_image:
-            return []
+            cg_image = Quartz.CGImageSourceCreateImageAtIndex(image_source, 0, None)
+            if not cg_image:
+                return []
 
-        # Create barcode detection request
-        request = Vision.VNDetectBarcodesRequest.alloc().init()
+            # Create barcode detection request
+            request = Vision.VNDetectBarcodesRequest.alloc().init()
 
-        # Create handler and perform request
-        handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(cg_image, None)
-        success = handler.performRequests_error_([request], None)
+            # Create handler and perform request
+            handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(cg_image, None)
+            success = handler.performRequests_error_([request], None)
 
-        if not success:
-            return []
+            if not success:
+                return []
 
-        # Extract barcode payloads
-        barcodes = []
-        for observation in request.results() or []:
-            if hasattr(observation, "payloadStringValue") and observation.payloadStringValue():
-                barcodes.append(observation.payloadStringValue())
+            # Extract barcode payloads
+            barcodes = []
+            for observation in request.results() or []:
+                if hasattr(observation, "payloadStringValue") and observation.payloadStringValue():
+                    barcodes.append(observation.payloadStringValue())
 
-        return barcodes
+            return barcodes
+        finally:
+            del pool
 
     except ImportError:
         logger.debug("Vision framework not available for barcode detection")

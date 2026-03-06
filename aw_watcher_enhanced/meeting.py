@@ -57,13 +57,14 @@ _MEETING_PROCESSES = {
     },
 }
 
-# Cache for process checks
+# Cache for process checks (bounded to prevent unbounded growth)
 _process_cache: Dict[str, Tuple[bool, float]] = {}
 _PROCESS_CACHE_TTL = 10.0  # seconds
+_PROCESS_CACHE_MAX = 50  # max entries before eviction
 
 
 def _check_process_running(process_name: str) -> bool:
-    """Check if a process is running (cached)."""
+    """Check if a process is running (cached with eviction)."""
     now = time.time()
     cached = _process_cache.get(process_name)
     if cached and now - cached[1] < _PROCESS_CACHE_TTL:
@@ -85,6 +86,17 @@ def _check_process_running(process_name: str) -> bool:
             running = process_name.lower() in result.stdout.lower()
     except Exception as e:
         logger.debug(f"Process check failed for {process_name}: {e}")
+
+    # Evict expired entries if cache is too large
+    if len(_process_cache) >= _PROCESS_CACHE_MAX:
+        expired = [k for k, (_, ts) in _process_cache.items() if now - ts >= _PROCESS_CACHE_TTL]
+        for k in expired:
+            del _process_cache[k]
+        # If still too large, drop oldest half
+        if len(_process_cache) >= _PROCESS_CACHE_MAX:
+            sorted_keys = sorted(_process_cache, key=lambda k: _process_cache[k][1])
+            for k in sorted_keys[: len(sorted_keys) // 2]:
+                del _process_cache[k]
 
     _process_cache[process_name] = (running, now)
     return running
@@ -144,3 +156,53 @@ def detect_meeting(
                 return True, platform
 
     return False, ""
+
+
+def detect_camera_mic() -> Dict[str, bool]:
+    """Detect if camera and/or microphone are currently active.
+
+    Uses process detection (VDCAssistant for camera) on macOS.
+
+    Returns:
+        Dict with 'camera_active' and 'mic_active' booleans.
+    """
+    result = {"camera_active": False, "mic_active": False}
+
+    if sys.platform != "darwin":
+        return result
+
+    try:
+        # Camera: check for VDCAssistant or AppleCameraAssistant
+        cam_result = subprocess.run(
+            ["pgrep", "-x", "VDCAssistant"],
+            capture_output=True,
+            timeout=2,
+        )
+        if cam_result.returncode != 0:
+            cam_result = subprocess.run(
+                ["pgrep", "-x", "AppleCameraAssistant"],
+                capture_output=True,
+                timeout=2,
+            )
+        result["camera_active"] = cam_result.returncode == 0
+    except Exception as e:
+        logger.debug(f"Camera detection error: {e}")
+
+    try:
+        # Mic: check if any process is using audio input
+        mic_result = subprocess.run(
+            [
+                "bash", "-c",
+                "ioreg -l | grep -c '\"IOAudioEngineState\" = 1'",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if mic_result.returncode == 0:
+            count = int(mic_result.stdout.strip() or "0")
+            result["mic_active"] = count > 0
+    except Exception as e:
+        logger.debug(f"Mic detection error: {e}")
+
+    return result

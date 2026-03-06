@@ -3,6 +3,7 @@ Tests for smart capture system including activity tracking.
 """
 
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -12,15 +13,21 @@ from aw_watcher_enhanced.smart_capture import IdleDetector, OCRDiffDetector
 class TestIdleDetectorActivity:
     """Tests for activity percentage tracking in IdleDetector."""
 
+    def _make_detector_with_mock_idle(self, idle_seconds=0.0):
+        """Create an IdleDetector with a mocked idle time."""
+        detector = IdleDetector()
+        detector._get_idle_time = lambda: idle_seconds
+        return detector
+
     def test_record_activity_sample(self):
         """Test that recording samples works."""
-        detector = IdleDetector()
+        detector = self._make_detector_with_mock_idle(0.0)
         detector.record_activity_sample()
         assert len(detector._activity_samples) == 1
 
     def test_multiple_samples(self):
         """Test recording multiple samples."""
-        detector = IdleDetector()
+        detector = self._make_detector_with_mock_idle(0.0)
         for _ in range(10):
             detector.record_activity_sample()
         assert len(detector._activity_samples) == 10
@@ -32,34 +39,39 @@ class TestIdleDetectorActivity:
 
     def test_activity_percentage_all_active(self):
         """Test 100% activity when all samples are active."""
-        detector = IdleDetector()
-        # Force active samples (idle_time returns 0 on fallback)
+        detector = self._make_detector_with_mock_idle(0.0)
         for _ in range(10):
             detector.record_activity_sample()
         pct = detector.get_activity_percentage()
-        # On fallback (no Quartz), idle always returns 0, so all active
         assert pct == 100.0
+
+    def test_activity_percentage_all_idle(self):
+        """Test 0% activity when all samples are idle."""
+        detector = self._make_detector_with_mock_idle(5.0)
+        for _ in range(10):
+            detector.record_activity_sample()
+        pct = detector.get_activity_percentage()
+        assert pct == 0.0
 
     def test_activity_percentage_custom_window(self):
         """Test custom window parameter."""
-        detector = IdleDetector()
+        detector = self._make_detector_with_mock_idle(0.0)
         for _ in range(5):
             detector.record_activity_sample()
         pct = detector.get_activity_percentage(window_seconds=60.0)
-        assert 0.0 <= pct <= 100.0
+        assert pct == 100.0
 
     def test_activity_percentage_old_samples_excluded(self):
         """Test that old samples outside window are excluded."""
-        detector = IdleDetector()
-        # Manually insert an old sample
-        detector._activity_samples.append((time.time() - 600, True))
-        # Insert recent samples
+        detector = self._make_detector_with_mock_idle(0.0)
+        # Manually insert an old sample (inactive, outside window)
+        detector._activity_samples.append((time.time() - 600, False))
+        # Insert recent active samples
         for _ in range(5):
             detector.record_activity_sample()
         # With 300s window, the old sample should be excluded
         pct = detector.get_activity_percentage(window_seconds=300.0)
-        # Should only consider the 5 recent samples
-        assert pct >= 0.0
+        assert pct == 100.0
 
     def test_deque_maxlen(self):
         """Test that deque has maxlen of 300."""
@@ -68,7 +80,7 @@ class TestIdleDetectorActivity:
 
     def test_deque_overflow(self):
         """Test that deque drops oldest when full."""
-        detector = IdleDetector()
+        detector = self._make_detector_with_mock_idle(0.0)
         for _ in range(350):
             detector.record_activity_sample()
         assert len(detector._activity_samples) == 300
@@ -90,15 +102,27 @@ class TestIdleDetector:
 
     def test_is_idle_default(self):
         detector = IdleDetector()
-        # On fallback, always returns 0 (active)
+        detector._get_idle_time = lambda: 0.0
         assert detector.is_idle() is False
 
-    def test_is_idle_custom_threshold(self):
+    def test_is_idle_when_idle(self):
         detector = IdleDetector()
-        # With 0 threshold, even 0s idle would be idle
-        result = detector.is_idle(threshold_seconds=0)
-        # Fallback returns 0.0 which is not > 0
-        assert isinstance(result, bool)
+        detector._get_idle_time = lambda: 120.0
+        assert detector.is_idle() is True
+
+    def test_is_idle_zero_threshold(self):
+        """Test that is_idle(threshold_seconds=0) works correctly."""
+        detector = IdleDetector()
+        detector._get_idle_time = lambda: 0.5
+        # threshold=0 means any idle time > 0 should be idle
+        assert detector.is_idle(threshold_seconds=0) is True
+
+    def test_is_idle_zero_threshold_not_idle(self):
+        """Test that is_idle(threshold_seconds=0) with 0 idle returns False."""
+        detector = IdleDetector()
+        detector._get_idle_time = lambda: 0.0
+        # 0.0 > 0 is False
+        assert detector.is_idle(threshold_seconds=0) is False
 
 
 class TestOCRDiffDetector:

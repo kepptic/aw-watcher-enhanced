@@ -19,6 +19,10 @@ def watcher():
         w.config["ocr"]["trigger"] = "adaptive"
         w.config["ocr"]["periodic_interval"] = 30
         w.config["ocr"]["adaptive_fallback_interval"] = 300
+        # Mock idle detector as not idle (we're in test, no real input device)
+        if w.idle_detector:
+            w.idle_detector.is_idle = MagicMock(return_value=False)
+            w.idle_detector.get_idle_seconds = MagicMock(return_value=0.0)
         return w
 
 
@@ -37,7 +41,7 @@ class TestIsDataRich:
 
     def test_document_context_makes_data_rich(self, watcher):
         """Having document context from title parsing is sufficient."""
-        data = {"app": "Code", "title": "main.py", "document": {"filename": "main.py"}}
+        data = {"app": "Code", "title": "main.py", "doc_file": "main.py", "doc_project": "my-project"}
         assert watcher._is_data_rich(data) is True
 
     def test_browser_without_url_is_thin(self, watcher):
@@ -69,7 +73,7 @@ class TestIsDataRich:
         data = {
             "app": "Microsoft Excel",
             "title": "Report.xlsx - Excel",
-            "document": {"filename": "Report.xlsx"},
+            "doc_file": "Report.xlsx",
         }
         assert watcher._is_data_rich(data) is True
 

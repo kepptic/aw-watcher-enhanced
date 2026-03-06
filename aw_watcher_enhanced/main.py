@@ -13,11 +13,12 @@ Usage:
 """
 
 import argparse
-import collections
 import gc
 import logging
+import re
 import signal
 import sys
+import threading
 from datetime import datetime, timezone
 from time import sleep
 from typing import Optional
@@ -27,9 +28,15 @@ from aw_core.models import Event
 
 from .categorizer import categorize_event
 from .config import load_config
-from .document import parse_document_context
+from .document import (
+    extract_project_from_cwd,
+    get_shell_sessions,
+    get_terminal_cwd,
+    parse_document_context,
+)
+from .enrichment import EnrichmentWorker
 from .privacy import apply_privacy_filters
-from .window import get_current_window
+from .window import get_all_windows, get_current_window, get_window_fast
 
 # Try to import browser data merger (optional)
 try:
@@ -41,7 +48,7 @@ except ImportError:
 
 # Try to import meeting detection (optional)
 try:
-    from .meeting import detect_meeting
+    from .meeting import detect_camera_mic, detect_meeting
 
     MEETING_AVAILABLE = True
 except ImportError:
@@ -70,6 +77,38 @@ except ImportError:
     SMART_CAPTURE_AVAILABLE = False
     OCRDiffDetector = None
 
+# Try to import OS event listener (optional, macOS only)
+try:
+    from .os_events import OSEventListener
+
+    OS_EVENTS_AVAILABLE = True
+except ImportError:
+    OS_EVENTS_AVAILABLE = False
+
+# Try to import calendar monitor (optional, macOS only)
+try:
+    from .calendar_events import CalendarMonitor
+
+    CALENDAR_AVAILABLE = True
+except ImportError:
+    CALENDAR_AVAILABLE = False
+
+# Try to import file activity tracker (optional)
+try:
+    from .file_events import FileActivityTracker
+
+    FILE_EVENTS_AVAILABLE = True
+except ImportError:
+    FILE_EVENTS_AVAILABLE = False
+
+# Try to import IDE data merger (optional)
+try:
+    from .ide_merger import IDEDataMerger
+
+    IDE_MERGER_AVAILABLE = True
+except ImportError:
+    IDE_MERGER_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 WATCHER_NAME = "aw-watcher-enhanced"
@@ -89,21 +128,25 @@ class EnhancedWatcher:
         self.client = ActivityWatchClient(WATCHER_NAME, testing=testing)
         self.bucket_id = f"{WATCHER_NAME}_{self.client.client_hostname}"
 
-        # Track state for change detection
+        # Fast heartbeat state
+        self._last_fast_window = None
+
+        # Shared enriched state (written by enrichment thread, read by heartbeat)
+        self._enriched_state = None
+        self._enriched_state_lock = threading.Lock()
+        self._enriched_window_key = None  # (app, title) the enriched state belongs to
+
+        # Track state for change detection (used by enrichment)
         self.last_window_data = None
         self.last_ocr_time = None
         self.last_ocr_result = None  # Cache last OCR/LLM result
+        self._last_ocr_result_time = None  # TTL for cached LLM result
+        self._ocr_result_ttl = 300.0  # Clear cached LLM result after 5 min
         self._transition_pending = False  # F6: capture incoming window after switch
-
-        # Context-switch tracking
-        self._last_switch_time = datetime.now(timezone.utc)
-        self._switch_timestamps: collections.deque = collections.deque(maxlen=500)
-        self._last_switch_app = None
-        self._last_switch_title = None
 
         # Memory management - run gc.collect() periodically
         self._last_gc_time = None
-        self._gc_interval = 300  # Run garbage collection every 5 minutes
+        self._gc_interval = 60  # Run garbage collection every 60 seconds
 
         # LLM config
         self.llm_model = self.config.get("llm", {}).get("model", "gemma3:4b")
@@ -144,6 +187,30 @@ class EnhancedWatcher:
         if self.enable_meeting:
             logger.info("Meeting detection enabled")
 
+        # OS event listener (macOS: app lifecycle, music, clipboard, screen lock)
+        self.os_event_listener = None
+        if OS_EVENTS_AVAILABLE:
+            self.os_event_listener = OSEventListener()
+            logger.info("OS event listener available")
+
+        # Calendar monitor (macOS: EventKit)
+        self.calendar_monitor = None
+        if CALENDAR_AVAILABLE:
+            self.calendar_monitor = CalendarMonitor()
+            logger.info("Calendar monitoring available")
+
+        # File activity tracker
+        self.file_tracker = None
+        if FILE_EVENTS_AVAILABLE:
+            self.file_tracker = FileActivityTracker()
+            logger.info("File activity tracking available")
+
+        # IDE data merger (reads from aw-watcher-vscode etc.)
+        self.ide_merger = None
+        if IDE_MERGER_AVAILABLE:
+            self.ide_merger = IDEDataMerger(self.client, self.client.client_hostname)
+            logger.info("IDE data merger available")
+
         logger.info(f"Initialized {WATCHER_NAME}")
         logger.info(f"OCR enabled: {self.enable_ocr}")
         logger.info(f"LLM enhancement enabled: {self.enable_llm}")
@@ -151,78 +218,107 @@ class EnhancedWatcher:
 
     def setup(self):
         """Create bucket and prepare for capture."""
-        event_type = "enhanced_window"
-        self.client.create_bucket(self.bucket_id, event_type, queued=True)
+        self.client.create_bucket(
+            self.bucket_id, "currentwindow", queued=True
+        )
         logger.info(f"Created bucket: {self.bucket_id}")
 
-    def _compute_context_metrics(self, window_data: dict) -> dict:
-        """Compute context-switch metrics for the current event.
-
-        Returns dict with focus_duration and switches_last_hour.
-        """
-        now = datetime.now(timezone.utc)
-        current_app = window_data.get("app", "")
-        current_title = window_data.get("title", "")
-        metrics = {}
-
-        # Detect context switch (app or title changed)
-        switched = (
-            current_app != self._last_switch_app
-            or current_title != self._last_switch_title
-        )
-
-        if switched and self._last_switch_app is not None:
-            # Record how long we were in the previous window
-            metrics["focus_duration"] = round(
-                (now - self._last_switch_time).total_seconds(), 1
-            )
-            self._switch_timestamps.append(now)
-            self._last_switch_time = now
-            self._last_switch_app = current_app
-            self._last_switch_title = current_title
-        elif self._last_switch_app is None:
-            # First capture ever
-            self._last_switch_app = current_app
-            self._last_switch_title = current_title
-            self._last_switch_time = now
-            metrics["focus_duration"] = 0.0
-        else:
-            # Same window — report ongoing duration
-            metrics["focus_duration"] = round(
-                (now - self._last_switch_time).total_seconds(), 1
-            )
-
-        # Count switches in the last hour
-        one_hour_ago = now.timestamp() - 3600
-        recent = [ts for ts in self._switch_timestamps if ts.timestamp() > one_hour_ago]
-        metrics["switches_last_hour"] = len(recent)
-
-        return metrics
-
     def capture_state(self) -> Optional[dict]:
-        """Capture current window state with all enhancements."""
-        # Step 1: Get basic window info
+        """Capture current window state with all enhancements.
+
+        Returns a stable data dict (no volatile fields) so that
+        the heartbeat loop can merge events cleanly. Focus duration
+        and switch counts are computable from event timestamps.
+        """
+        # Step 1: Get basic window info (full AX details)
         window_data = get_current_window()
         if not window_data:
             return None
 
-        # Step 1.1: Context-switch metrics
-        context_metrics = self._compute_context_metrics(window_data)
-        window_data.update(context_metrics)
-
-        # Step 1.2: Activity level percentage
-        if self.idle_detector:
-            self.idle_detector.record_activity_sample()
-            window_data["activity_pct"] = round(
-                self.idle_detector.get_activity_percentage(), 1
-            )
-
-        # Step 2: Parse document context from title
+        # Step 2: Parse document context from title (flatten to string fields)
         document_context = parse_document_context(
             app=window_data.get("app", ""), title=window_data.get("title", "")
         )
         if document_context:
-            window_data["document"] = document_context
+            if document_context.get("filename"):
+                window_data["doc_file"] = document_context["filename"]
+            if document_context.get("project"):
+                window_data["doc_project"] = document_context["project"]
+            if document_context.get("type"):
+                window_data["doc_type"] = document_context["type"]
+            if document_context.get("file_type"):
+                window_data["doc_file_type"] = document_context["file_type"]
+            if document_context.get("extension"):
+                window_data["doc_ext"] = document_context["extension"]
+            if document_context.get("path"):
+                window_data["doc_path"] = document_context["path"]
+            if document_context.get("page_title"):
+                window_data["doc_page_title"] = document_context["page_title"]
+
+        # Step 2.2: Terminal / IDE shell session detection
+        app_name = window_data.get("app", "")
+        title = window_data.get("title", "")
+        pid = window_data.get("pid")
+
+        if self._is_terminal_app(app_name):
+            # Standalone terminal app — get CWD of child shell
+            if pid:
+                cwd = self._get_terminal_project_cwd(pid)
+                if cwd:
+                    window_data["cwd"] = cwd
+                    project = extract_project_from_cwd(cwd)
+                    if project:
+                        window_data["terminal_project"] = project
+                        if "doc_project" not in window_data:
+                            window_data["doc_project"] = project
+                            window_data["doc_type"] = "terminal"
+
+        elif self._is_ide_with_terminal(app_name) and pid:
+            # IDE with integrated terminal (VS Code, Cursor, etc.)
+            # Get all shell sessions to know every project being worked on
+            sessions = get_shell_sessions(pid)
+            if sessions:
+                # Deduplicate by project name, flatten to strings for AW compatibility
+                seen_projects = set()
+                projects = []
+                for s in sessions:
+                    proj = s.get("project", "")
+                    if proj and proj not in seen_projects:
+                        seen_projects.add(proj)
+                        projects.append(proj)
+                if projects:
+                    window_data["shell_projects"] = "; ".join(sorted(projects))
+
+        # Detect AI coding assistant sessions from title
+        title_lower = title.lower()
+        if "claude" in title_lower or "claude code" in title_lower:
+            window_data["ai_assistant"] = "claude_code"
+        elif "copilot" in title_lower:
+            window_data["ai_assistant"] = "github_copilot"
+        elif "aider" in title_lower:
+            window_data["ai_assistant"] = "aider"
+        elif "cursor" in app_name.lower():
+            window_data["ai_assistant"] = "cursor"
+
+        # Step 2.3: Merge IDE watcher data (aw-watcher-vscode, etc.)
+        if self.ide_merger:
+            ide_data = self.ide_merger.get_ide_data(app_name)
+            if ide_data:
+                window_data.update(ide_data)
+                logger.debug(
+                    f"IDE merge: {ide_data.get('ide_project', '')} "
+                    f"file={ide_data.get('ide_file', '')}"
+                )
+
+        # Step 2.4: All-windows snapshot (compact: app+title only, capped)
+        all_windows = get_all_windows()
+        if all_windows:
+            # Keep only essential fields and limit count to prevent bloat
+            compact = [
+                {"app": w.get("app", ""), "title": w.get("title", "")}
+                for w in all_windows[:20]
+            ]
+            window_data["open_windows"] = compact
 
         # Step 2.5: Merge browser URL data (if active app is a browser)
         if self.browser_merger and BROWSER_MERGE_AVAILABLE:
@@ -235,6 +331,40 @@ class EnhancedWatcher:
                     if browser_data.get("tab_title"):
                         window_data["tab_title"] = browser_data["tab_title"]
 
+        # Step 2.6: Merge OS event data (music, clipboard)
+        if self.os_event_listener:
+            # Now-playing music
+            music = self.os_event_listener.get_music_state()
+            if music and music.get("state") == "playing":
+                window_data["music_artist"] = music.get("artist", "")
+                window_data["music_track"] = music.get("track", "")
+                if music.get("album"):
+                    window_data["music_album"] = music["album"]
+                window_data["music_player"] = music.get("player", "")
+
+            # Clipboard changes
+            clipboard = self.os_event_listener.get_clipboard_data()
+            if clipboard:
+                window_data["clipboard_type"] = clipboard.get(
+                    "clipboard_type", ""
+                )
+                if clipboard.get("clipboard_text"):
+                    window_data["clipboard_text"] = clipboard[
+                        "clipboard_text"
+                    ]
+
+        # Step 2.65: Calendar context
+        if self.calendar_monitor:
+            cal_event = self.calendar_monitor.get_current_event()
+            if cal_event:
+                window_data.update(cal_event)
+
+        # Step 2.68: Recent file activity
+        if self.file_tracker:
+            recent_files = self.file_tracker.get_recent_files(limit=10)
+            if recent_files:
+                window_data["recent_files"] = recent_files
+
         # Step 2.7: Meeting detection
         if self.enable_meeting:
             in_meeting, meeting_app = detect_meeting(
@@ -246,6 +376,11 @@ class EnhancedWatcher:
             window_data["in_meeting"] = in_meeting
             if meeting_app:
                 window_data["meeting_app"] = meeting_app
+            # Camera/mic active detection (strengthens meeting confidence)
+            if in_meeting:
+                cam_mic = detect_camera_mic()
+                window_data["camera_active"] = cam_mic["camera_active"]
+                window_data["mic_active"] = cam_mic["mic_active"]
 
         # Step 3: OCR capture (if enabled and triggered)
         if self.enable_ocr and self._should_capture_ocr(window_data):
@@ -302,15 +437,26 @@ class EnhancedWatcher:
                         else:
                             llm_result = None  # Will run LLM below
 
+                    # Expire stale cached LLM result
+                    if (
+                        self.last_ocr_result
+                        and self._last_ocr_result_time
+                        and (datetime.now(timezone.utc) - self._last_ocr_result_time).total_seconds()
+                        > self._ocr_result_ttl
+                    ):
+                        self.last_ocr_result = None
+                        self._last_ocr_result_time = None
+
                     if should_run_llm:
                         llm_result = summarize_ocr_with_llm(
                             ocr_text,
                             model=self.llm_model,
                             timeout=self.llm_timeout,
                         )
-                        # Cache result for potential reuse
+                        # Cache result for potential reuse (with TTL)
                         if llm_result:
                             self.last_ocr_result = llm_result
+                            self._last_ocr_result_time = datetime.now(timezone.utc)
                     else:
                         llm_result = self.last_ocr_result
                     if llm_result:
@@ -366,7 +512,55 @@ class EnhancedWatcher:
         if category:
             window_data["category"] = category
 
+        # Remove internal fields not needed in event data
+        window_data.pop("pid", None)
+
         return window_data
+
+    # Terminal app patterns
+    _TERMINAL_APPS = re.compile(
+        r"terminal|iterm|iterm2|alacritty|kitty|wezterm|warp|hyper|"
+        r"cmd\.exe|powershell|windowsterminal|konsole|gnome-terminal",
+        re.IGNORECASE,
+    )
+
+    # IDEs with integrated terminals
+    _IDE_WITH_TERMINAL = re.compile(
+        r"code|visual studio code|cursor|windsurf|pycharm|intellij|webstorm|"
+        r"phpstorm|rider|goland|clion|datagrip|rubymine",
+        re.IGNORECASE,
+    )
+
+    def _is_terminal_app(self, app_name: str) -> bool:
+        """Check if the app is a terminal emulator."""
+        if not app_name:
+            return False
+        return bool(self._TERMINAL_APPS.search(app_name))
+
+    def _is_ide_with_terminal(self, app_name: str) -> bool:
+        """Check if the app is an IDE that has an integrated terminal."""
+        if not app_name:
+            return False
+        return bool(self._IDE_WITH_TERMINAL.search(app_name))
+
+    def _get_terminal_project_cwd(self, terminal_pid: int) -> Optional[str]:
+        """Get the CWD of the shell running inside a terminal app.
+
+        Terminal apps (iTerm2, Terminal.app) spawn a child shell process
+        (zsh, bash, fish). We need the shell's CWD, not the terminal's.
+        """
+        from .document import _get_child_shell_pid
+
+        # First try to get the child shell's CWD (more accurate)
+        shell_pid = _get_child_shell_pid(terminal_pid)
+        if shell_pid:
+            cwd = get_terminal_cwd(shell_pid)
+            if cwd:
+                return cwd
+
+        # Fallback: get the terminal app's own CWD
+        cwd = get_terminal_cwd(terminal_pid)
+        return cwd
 
     def _is_remote_desktop_app(self, app_name: str) -> bool:
         """Check if the current app is a remote desktop application."""
@@ -389,7 +583,7 @@ class EnhancedWatcher:
         Returns True if data is rich enough to skip OCR.
         """
         has_ax = bool(current_data.get("focused_element_role"))
-        has_document = bool(current_data.get("document"))
+        has_document = bool(current_data.get("doc_project") or current_data.get("doc_file"))
 
         # Browser app without URL means web extension is missing — data is thin
         app_name = current_data.get("app", "")
@@ -533,80 +727,143 @@ class EnhancedWatcher:
 
         return False
 
-    def _get_adaptive_poll_time(self) -> float:
-        """Get adaptive poll time based on user activity."""
-        base_poll = self.config.get("watcher", {}).get("poll_time", 5.0)
+    def _heartbeat_loop(self, enrichment_worker: EnrichmentWorker):
+        """Fast heartbeat loop - sends {app, title} every 1s. Never blocked.
 
-        if self.idle_detector:
-            idle_secs = self.idle_detector.get_idle_seconds()
-
-            if idle_secs > self.idle_threshold * 5:
-                # Very idle (5+ minutes) - poll very slowly
-                return self.idle_poll_time * 2
-            elif idle_secs > self.idle_threshold:
-                # Idle (1+ minute) - poll slowly
-                return self.idle_poll_time
-
-        # Active - normal polling
-        return base_poll
-
-    def run(self):
-        """Main watcher loop with adaptive polling."""
-        self.running = True
-        base_poll_time = self.config.get("watcher", {}).get("poll_time", 5.0)
-        pulsetime = self.config.get("watcher", {}).get("pulsetime", base_poll_time + 1.0)
+        Runs in a dedicated thread. Only sends the two stable fields
+        (app, title) so events merge cleanly via ActivityWatch's
+        heartbeat mechanism. Signals the enrichment worker on window change.
+        """
+        heartbeat_interval = self.config.get("watcher", {}).get(
+            "heartbeat_interval", 1.0
+        )
+        pulsetime = heartbeat_interval + 1.0
 
         logger.info(
-            f"Starting main loop (base_poll_time={base_poll_time}s, idle_threshold={self.idle_threshold}s)"
+            f"Heartbeat loop started (interval={heartbeat_interval}s, "
+            f"pulsetime={pulsetime}s)"
         )
 
-        with self.client:
-            while self.running:
-                try:
-                    # Get adaptive poll time based on activity
-                    poll_time = self._get_adaptive_poll_time()
+        while self.running:
+            try:
+                window = get_window_fast()
+                if window is None:
+                    # Use last known window (never skip a heartbeat)
+                    window = self._last_fast_window or {
+                        "app": "unknown",
+                        "title": "",
+                    }
 
-                    # Log idle status periodically
-                    if self.idle_detector:
-                        idle_secs = self.idle_detector.get_idle_seconds()
-                        if idle_secs > self.idle_threshold:
-                            logger.debug(
-                                f"User idle ({idle_secs:.0f}s), polling every {poll_time:.0f}s"
-                            )
+                app = window.get("app", "unknown")
+                title = window.get("title", "")
 
-                    # Capture current state
-                    data = self.capture_state()
-
-                    if data:
-                        event = Event(timestamp=datetime.now(timezone.utc), data=data)
-
-                        self.client.heartbeat(
-                            self.bucket_id, event, pulsetime=pulsetime, queued=True
-                        )
-
-                        logger.debug(f"Heartbeat: {data.get('app')} - {data.get('title', '')[:50]}")
-
-                        # Update state tracking
-                        self.last_window_data = data
-
-                    # Periodic garbage collection to prevent memory leaks
-                    now = datetime.now(timezone.utc)
+                # Merge enriched data if available for current window
+                with self._enriched_state_lock:
                     if (
-                        self._last_gc_time is None
-                        or (now - self._last_gc_time).total_seconds() >= self._gc_interval
+                        self._enriched_state is not None
+                        and self._enriched_window_key == (app, title)
                     ):
-                        collected = gc.collect()
-                        if collected > 0:
-                            logger.debug(f"Garbage collected {collected} objects")
-                        self._last_gc_time = now
+                        data = self._enriched_state.copy()
+                    else:
+                        data = {"app": app, "title": title}
 
-                except KeyboardInterrupt:
-                    logger.info("Interrupted, shutting down...")
-                    break
-                except Exception as e:
-                    logger.error(f"Error in main loop: {e}", exc_info=True)
+                event = Event(
+                    timestamp=datetime.now(timezone.utc), data=data
+                )
+                self.client.heartbeat(
+                    self.bucket_id,
+                    event,
+                    pulsetime=pulsetime,
+                    queued=True,
+                )
 
-                sleep(poll_time)
+                # Detect window change → signal enrichment
+                window_key = (app, title)
+                if (
+                    self._last_fast_window is None
+                    or window_key != self._last_fast_window
+                ):
+                    # Clear stale enriched state for old window
+                    with self._enriched_state_lock:
+                        self._enriched_state = None
+                        self._enriched_window_key = None
+                    enrichment_worker.notify_window_change()
+                    logger.debug(
+                        f"Window changed: {app} - {title[:50]}"
+                    )
+
+                self._last_fast_window = window_key
+
+                # Periodic garbage collection
+                now = datetime.now(timezone.utc)
+                if (
+                    self._last_gc_time is None
+                    or (now - self._last_gc_time).total_seconds()
+                    >= self._gc_interval
+                ):
+                    collected = gc.collect()
+                    if collected > 0:
+                        logger.debug(
+                            f"Garbage collected {collected} objects"
+                        )
+                    self._last_gc_time = now
+
+            except Exception as e:
+                logger.error(f"Heartbeat error: {e}")
+
+            sleep(heartbeat_interval)
+
+        logger.info("Heartbeat loop stopped")
+
+    def run(self):
+        """Start the two-thread architecture: heartbeat + enrichment.
+
+        Thread 1 (heartbeat): Sends {app, title} every 1s for gap-free timeline.
+        Thread 2 (enrichment): Captures rich context on window change / periodic.
+        """
+        self.running = True
+
+        logger.info("Starting two-thread architecture")
+
+        with self.client:
+            # Start background services
+            if self.os_event_listener:
+                self.os_event_listener.start()
+            if self.calendar_monitor:
+                self.calendar_monitor.start()
+            if self.file_tracker:
+                self.file_tracker.start()
+
+            enrichment_worker = EnrichmentWorker(
+                watcher=self,
+                periodic_interval=15.0,
+            )
+            enrichment_worker.start()
+
+            heartbeat_thread = threading.Thread(
+                target=self._heartbeat_loop,
+                args=(enrichment_worker,),
+                name="heartbeat",
+                daemon=True,
+            )
+            heartbeat_thread.start()
+
+            # Main thread waits for stop signal
+            try:
+                while self.running:
+                    sleep(1.0)
+            except KeyboardInterrupt:
+                logger.info("Interrupted, shutting down...")
+                self.running = False
+
+            enrichment_worker.stop()
+            heartbeat_thread.join(timeout=5.0)
+            if self.os_event_listener:
+                self.os_event_listener.stop()
+            if self.calendar_monitor:
+                self.calendar_monitor.stop()
+            if self.file_tracker:
+                self.file_tracker.stop()
 
         logger.info("Watcher stopped")
 

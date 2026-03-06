@@ -1,0 +1,488 @@
+mod aw_client;
+mod browser;
+mod categorizer;
+mod config;
+mod document;
+mod file_tracker;
+mod idle;
+mod ide_merger;
+mod llm;
+mod meeting;
+mod ocr;
+mod os_events;
+mod privacy;
+mod window;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+use chrono::Utc;
+use clap::Parser;
+use log::{debug, error, info, warn};
+
+use aw_client::{AwClient, Event};
+use window::WindowInfo;
+
+const WATCHER_NAME: &str = "aw-watcher-enhanced";
+
+/// Enhanced ActivityWatch watcher with rich context capture.
+#[derive(Parser, Debug)]
+#[command(version, about)]
+struct Args {
+    /// Use testing server (port 5666)
+    #[arg(long)]
+    testing: bool,
+
+    /// Enable verbose debug logging
+    #[arg(short, long)]
+    verbose: bool,
+
+    /// Skip OCR/LLM features
+    #[arg(long)]
+    no_ocr: bool,
+
+    /// Skip file watching
+    #[arg(long)]
+    no_file_watch: bool,
+}
+
+/// Shared state between heartbeat and enrichment threads.
+struct SharedState {
+    /// Enriched event data from the enrichment thread.
+    enriched_data: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The (app, title) key the enriched data belongs to.
+    enriched_window_key: Option<(String, String)>,
+}
+
+fn main() {
+    let args = Args::parse();
+
+    // Initialize logging
+    let log_level = if args.verbose { "debug" } else { "info" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level))
+        .format_timestamp_millis()
+        .init();
+
+    info!("Starting {WATCHER_NAME}");
+
+    // Load configuration
+    let config = config::load_config();
+    info!(
+        "Config: heartbeat={}s, enrichment={}s, idle_threshold={}s",
+        config.watcher.heartbeat_interval,
+        config.watcher.poll_time,
+        config.smart_capture.idle_threshold
+    );
+
+    // Set up signal handling
+    let running = Arc::new(AtomicBool::new(true));
+    {
+        let running = running.clone();
+        ctrlc::set_handler(move || {
+            info!("Received interrupt, shutting down...");
+            running.store(false, Ordering::SeqCst);
+        })
+        .expect("Error setting Ctrl-C handler");
+    }
+
+    // Connect to ActivityWatch server
+    let client = match AwClient::new(WATCHER_NAME, args.testing) {
+        Ok(c) => Arc::new(c),
+        Err(e) => {
+            error!("Failed to create AW client: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let bucket_id = format!("{}_{}", WATCHER_NAME, client.hostname);
+
+    // Wait for server to be available
+    info!("Waiting for aw-server...");
+    for _ in 0..30 {
+        if client.is_alive() {
+            break;
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+
+    // Create bucket
+    if let Err(e) = client.create_bucket(&bucket_id, "currentwindow") {
+        error!("Failed to create bucket: {e}");
+        std::process::exit(1);
+    }
+    info!("Bucket ready: {bucket_id}");
+
+    // Shared state between threads
+    let shared = Arc::new(Mutex::new(SharedState {
+        enriched_data: None,
+        enriched_window_key: None,
+    }));
+
+    // Track window changes for the enrichment thread
+    let window_changed = Arc::new(AtomicBool::new(true));
+
+    // Start file activity tracker
+    let file_tracker = if !args.no_file_watch {
+        let mut tracker = file_tracker::FileActivityTracker::new(50);
+        tracker.start(None);
+        Some(Arc::new(Mutex::new(tracker)))
+    } else {
+        None
+    };
+
+    // ── Enrichment thread ────────────────────────────────────────────────
+    let enrichment_handle = {
+        let running = running.clone();
+        let shared = shared.clone();
+        let window_changed = window_changed.clone();
+        let client = client.clone();
+        let config = config.clone();
+        let file_tracker = file_tracker.clone();
+        let no_ocr = args.no_ocr;
+
+        thread::Builder::new()
+            .name("enrichment".into())
+            .spawn(move || {
+                info!("Enrichment thread started");
+
+                let mut browser_merger =
+                    browser::BrowserDataMerger::new(config.browser.bucket_refresh_interval as f64);
+                let mut ide_merger = ide_merger::IdeDataMerger::new();
+                let mut meeting_detector = meeting::MeetingDetector::new();
+                let mut ocr_engine = if !no_ocr && config.ocr.enabled {
+                    let engine = ocr::OcrEngine::new(
+                        config.smart_capture.min_ocr_interval,
+                        config.ocr.max_keywords,
+                    );
+                    if engine.is_available() {
+                        info!("OCR engine available");
+                        Some(engine)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                let mut os_listener = os_events::OsEventListener::new(100);
+                os_listener.start();
+
+                let _llm_client = if !no_ocr && config.llm.enabled {
+                    let c = llm::LlmClient::new(&config.llm);
+                    if c.is_available() {
+                        info!("LLM (Ollama) available: {}", config.llm.model);
+                        Some(c)
+                    } else {
+                        info!("LLM (Ollama) not available, skipping OCR summarization");
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let poll_time_ms = (config.watcher.poll_time * 1000.0) as u64;
+
+                while running.load(Ordering::SeqCst) {
+                    // Wait for window change or periodic timeout
+                    let mut waited = 0u64;
+                    while waited < poll_time_ms && running.load(Ordering::SeqCst) {
+                        if window_changed.swap(false, Ordering::SeqCst) {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(100));
+                        waited += 100;
+                    }
+
+                    if !running.load(Ordering::SeqCst) {
+                        break;
+                    }
+
+                    // Capture full enriched state
+                    if let Some(info) = window::get_current_window() {
+                        let mut data = serde_json::Map::new();
+                        data.insert("app".into(), info.app.clone().into());
+                        data.insert("title".into(), info.title.clone().into());
+
+                        // Privacy filter first — may exclude or redact
+                        if !privacy::apply_privacy_filters(&mut data, &config.privacy) {
+                            debug!("Event excluded by privacy filter");
+                            // Store empty enriched state so heartbeat uses basic data
+                            if let Ok(mut state) = shared.lock() {
+                                state.enriched_data = None;
+                                state.enriched_window_key = None;
+                            }
+                            continue;
+                        }
+
+                        // Parse document context
+                        if let Some(doc) =
+                            document::parse_document_context(&info.app, &info.title)
+                        {
+                            if let Some(f) = &doc.filename {
+                                data.insert("doc_file".into(), f.clone().into());
+                            }
+                            if let Some(p) = &doc.project {
+                                data.insert("doc_project".into(), p.clone().into());
+                            }
+                            if let Some(t) = &doc.doc_type {
+                                data.insert("doc_type".into(), t.clone().into());
+                            }
+                            if let Some(e) = &doc.extension {
+                                data.insert("doc_ext".into(), e.clone().into());
+                            }
+                        }
+
+                        // Categorize
+                        let category = categorizer::categorize(&info.app, &info.title);
+                        data.insert("category".into(), category.into());
+
+                        // Browser data merge
+                        if config.browser.enabled && browser::is_browser_app(&info.app) {
+                            if let Some(bd) = browser_merger.get_browser_data(&client) {
+                                data.insert("url".into(), bd.url.into());
+                                data.insert("domain".into(), bd.domain.into());
+                                data.insert("tab_title".into(), bd.tab_title.into());
+                            }
+                        }
+
+                        // IDE data merge (before AI detection — provides terminal context)
+                        if let Some(ide_data) = ide_merger.get_ide_data(&client, &info.app) {
+                            for (k, v) in ide_data.fields {
+                                data.insert(k, v);
+                            }
+                        }
+
+                        // Detect AI assistant from title or IDE terminal name
+                        let title_lower = info.title.to_lowercase();
+                        let ide_terminal = data
+                            .get("ide_active_terminal")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        // Claude Code sets VS Code terminal name to its version (e.g., "2.1.69")
+                        // With cwd enrichment it becomes "2.1.69 cent" — check first word
+                        let term_name = ide_terminal.split_whitespace().next().unwrap_or("");
+                        let is_claude_terminal = !term_name.is_empty()
+                            && term_name.contains('.')
+                            && term_name
+                                .chars()
+                                .all(|c| c.is_ascii_digit() || c == '.');
+
+                        if title_lower.contains("claude") || is_claude_terminal {
+                            data.insert("ai_assistant".into(), "claude_code".into());
+                        } else if title_lower.contains("copilot") {
+                            data.insert("ai_assistant".into(), "github_copilot".into());
+                        } else if title_lower.contains("aider") {
+                            data.insert("ai_assistant".into(), "aider".into());
+                        } else if info.app.to_lowercase().contains("cursor") {
+                            data.insert("ai_assistant".into(), "cursor".into());
+                        }
+
+                        // Meeting detection
+                        if config.meeting.enabled {
+                            let url = data
+                                .get("url")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let (in_meeting, platform) = meeting_detector.detect(
+                                &info.app,
+                                &info.title,
+                                url,
+                                config.meeting.detect_subprocess,
+                            );
+                            if in_meeting {
+                                data.insert("in_meeting".into(), true.into());
+                                data.insert("meeting_app".into(), platform.into());
+
+                                let (camera, mic) = meeting::detect_camera_mic();
+                                if camera {
+                                    data.insert("camera_active".into(), true.into());
+                                }
+                                if mic {
+                                    data.insert("mic_active".into(), true.into());
+                                }
+                            }
+                        }
+
+                        // Recent file activity
+                        if let Some(ref ft) = file_tracker {
+                            if let Ok(tracker) = ft.lock() {
+                                let files = tracker.get_recent_files(5);
+                                if !files.is_empty() {
+                                    let file_list: Vec<serde_json::Value> = files
+                                        .iter()
+                                        .map(|f| {
+                                            serde_json::json!({
+                                                "path": f.path,
+                                                "action": f.action,
+                                            })
+                                        })
+                                        .collect();
+                                    data.insert("recent_files".into(), file_list.into());
+                                }
+                            }
+                        }
+
+                        // OCR capture
+                        if let Some(ref mut engine) = ocr_engine {
+                            if let Some(ocr_result) = engine.capture_and_ocr() {
+                                if !ocr_result.keywords.is_empty() {
+                                    let kw: Vec<serde_json::Value> = ocr_result
+                                        .keywords
+                                        .iter()
+                                        .map(|k| k.clone().into())
+                                        .collect();
+                                    data.insert("ocr_keywords".into(), kw.into());
+                                }
+                                // Run LLM summarization if available
+                                if let Some(ref llm) = _llm_client {
+                                    if let Some(summary) = llm.summarize_ocr(&ocr_result.full_text) {
+                                        if let Some(s) = summary.summary {
+                                            data.insert("ocr_summary".into(), s.into());
+                                        }
+                                        if let Some(c) = summary.client {
+                                            data.insert("ocr_client".into(), c.into());
+                                        }
+                                        if let Some(p) = summary.project {
+                                            data.insert("ocr_project".into(), p.into());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // OS events (flush recent)
+                        let os_events = os_listener.flush_events();
+                        if !os_events.is_empty() {
+                            let events_json: Vec<serde_json::Value> = os_events
+                                .iter()
+                                .map(|e| {
+                                    serde_json::json!({
+                                        "type": e.event_type,
+                                        "app": e.app_name,
+                                    })
+                                })
+                                .collect();
+                            data.insert("os_events".into(), events_json.into());
+                        }
+
+                        // Store enriched state
+                        let key = (info.app.clone(), info.title.clone());
+                        if let Ok(mut state) = shared.lock() {
+                            state.enriched_data = Some(data);
+                            state.enriched_window_key = Some(key);
+                        }
+
+                        debug!(
+                            "Enriched: {} - {}",
+                            info.app,
+                            &info.title[..info.title.len().min(50)]
+                        );
+                    }
+                }
+                info!("Enrichment thread stopped");
+            })
+            .expect("Failed to spawn enrichment thread")
+    };
+
+    // ── Heartbeat thread ─────────────────────────────────────────────────
+    let heartbeat_handle = {
+        let running = running.clone();
+        let client = client.clone();
+        let shared = shared.clone();
+        let window_changed = window_changed.clone();
+        let bucket_id = bucket_id.clone();
+        let config = config.clone();
+
+        thread::Builder::new()
+            .name("heartbeat".into())
+            .spawn(move || {
+                info!("Heartbeat thread started ({}s interval)", config.watcher.heartbeat_interval);
+                let mut last_window: Option<(String, String)> = None;
+                let mut idle_detector = idle::IdleDetector::new(config.smart_capture.idle_threshold);
+                let sleep_ms = (config.watcher.heartbeat_interval * 1000.0) as u64;
+                let pulsetime = config.watcher.heartbeat_interval + 1.0;
+
+                while running.load(Ordering::SeqCst) {
+                    // Check idle
+                    if idle_detector.is_idle() {
+                        debug!("User idle, skipping heartbeat");
+                        thread::sleep(Duration::from_millis(sleep_ms));
+                        continue;
+                    }
+
+                    let window = window::get_current_window().unwrap_or(WindowInfo {
+                        app: "unknown".into(),
+                        title: String::new(),
+                    });
+
+                    let current_key = (window.app.clone(), window.title.clone());
+
+                    // Check for window change
+                    let changed = last_window.as_ref() != Some(&current_key);
+                    if changed {
+                        // Clear stale enriched state
+                        if let Ok(mut state) = shared.lock() {
+                            state.enriched_data = None;
+                            state.enriched_window_key = None;
+                        }
+                        // Signal enrichment thread
+                        window_changed.store(true, Ordering::SeqCst);
+                        debug!(
+                            "Window: {} - {}",
+                            window.app,
+                            &window.title[..window.title.len().min(50)]
+                        );
+                    }
+
+                    // Build event data — merge enriched state if available
+                    let data = if let Ok(state) = shared.lock() {
+                        if state.enriched_window_key.as_ref() == Some(&current_key) {
+                            if let Some(ref enriched) = state.enriched_data {
+                                enriched.clone()
+                            } else {
+                                basic_event_data(&window)
+                            }
+                        } else {
+                            basic_event_data(&window)
+                        }
+                    } else {
+                        basic_event_data(&window)
+                    };
+
+                    let event = Event {
+                        timestamp: Utc::now(),
+                        duration: 0.0,
+                        data,
+                    };
+
+                    if let Err(e) = client.heartbeat(&bucket_id, &event, pulsetime) {
+                        warn!("Heartbeat failed: {e}");
+                    }
+
+                    last_window = Some(current_key);
+                    thread::sleep(Duration::from_millis(sleep_ms));
+                }
+
+                info!("Heartbeat thread stopped");
+            })
+            .expect("Failed to spawn heartbeat thread")
+    };
+
+    // Main thread waits for stop signal
+    while running.load(Ordering::SeqCst) {
+        thread::sleep(Duration::from_millis(500));
+    }
+
+    info!("Waiting for threads to finish...");
+    let _ = heartbeat_handle.join();
+    let _ = enrichment_handle.join();
+    info!("{WATCHER_NAME} stopped");
+}
+
+fn basic_event_data(window: &WindowInfo) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = serde_json::Map::new();
+    m.insert("app".into(), window.app.clone().into());
+    m.insert("title".into(), window.title.clone().into());
+    m
+}

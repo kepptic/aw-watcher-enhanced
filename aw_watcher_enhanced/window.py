@@ -12,6 +12,36 @@ from typing import Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+def _with_autorelease(func):
+    """Decorator that wraps a function in an NSAutoreleasePool on macOS.
+
+    Quartz/AppKit calls (CGWindowListCopyWindowInfo, NSWorkspace, etc.)
+    return Core Foundation objects that accumulate without an autorelease
+    pool. In background threads (heartbeat, enrichment) there is no
+    default pool, so every CF object leaks. This decorator ensures
+    cleanup after each call.
+    """
+    if sys.platform != "darwin":
+        return func
+
+    from functools import wraps
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            from Foundation import NSAutoreleasePool
+        except ImportError:
+            return func(*args, **kwargs)
+
+        pool = NSAutoreleasePool.alloc().init()
+        try:
+            return func(*args, **kwargs)
+        finally:
+            del pool
+
+    return wrapper
+
+
 def get_current_window() -> Optional[Dict[str, str]]:
     """
     Get the currently active window's app and title.
@@ -143,6 +173,7 @@ def _get_app_via_wmi(pid: int) -> str:
     return "unknown"
 
 
+@_with_autorelease
 def _walk_ax_parent_chain(element, max_depth: int = 5) -> str:
     """Walk the AX parent chain to build a breadcrumb context string.
 
@@ -181,6 +212,7 @@ def _walk_ax_parent_chain(element, max_depth: int = 5) -> str:
     return " > ".join(parts) if parts else ""
 
 
+@_with_autorelease
 def _get_focused_element_details() -> Dict[str, str]:
     """Get details about the currently focused UI element using AXFocusedUIElement.
 
@@ -238,6 +270,24 @@ def _get_focused_element_details() -> Dict[str, str]:
         if context:
             result["focused_element_context"] = context
 
+        # Focused text content (what user is typing/viewing)
+        err, value = AXUIElementCopyAttributeValue(
+            focused_element, "AXValue", None
+        )
+        if err == 0 and value:
+            value_str = str(value).strip()
+            if value_str:
+                result["focused_text"] = value_str[:500]
+
+        # Selected text
+        err, selected = AXUIElementCopyAttributeValue(
+            focused_element, "AXSelectedText", None
+        )
+        if err == 0 and selected:
+            selected_str = str(selected).strip()
+            if selected_str:
+                result["selected_text"] = selected_str[:500]
+
         return result
 
     except Exception as e:
@@ -245,6 +295,7 @@ def _get_focused_element_details() -> Dict[str, str]:
         return {}
 
 
+@_with_autorelease
 def _get_focused_app_ax() -> Optional[Dict[str, str]]:
     """Get focused application and window title using system-wide Accessibility API."""
     try:
@@ -280,7 +331,16 @@ def _get_focused_app_ax() -> Optional[Dict[str, str]]:
                 title = str(win_title)
 
         if app:
-            return {"app": app, "title": title}
+            result = {"app": app, "title": title}
+            # Get PID for terminal CWD / shell session detection
+            try:
+                from HIServices import AXUIElementGetPid
+                err, pid_val = AXUIElementGetPid(focused_app, None)
+                if err == 0 and pid_val:
+                    result["pid"] = int(pid_val)
+            except (ImportError, Exception):
+                pass
+            return result
         return None
     except Exception as e:
         logger.debug(f"System-wide Accessibility API error: {e}")
@@ -291,6 +351,7 @@ def _get_focused_app_ax() -> Optional[Dict[str, str]]:
 _SYSTEM_APPS = frozenset({"loginwindow", "loginwindow.app", "SecurityAgent"})
 
 
+@_with_autorelease
 def _get_window_macos() -> Optional[Dict[str, str]]:
     """macOS implementation using Accessibility API and mouse position for multi-monitor."""
     try:
@@ -307,6 +368,15 @@ def _get_window_macos() -> Optional[Dict[str, str]]:
             focused_details = _get_focused_element_details()
             if focused_details:
                 ax_result.update(focused_details)
+            # Ensure PID is set (fallback to NSWorkspace if AX didn't provide it)
+            if "pid" not in ax_result:
+                try:
+                    workspace = NSWorkspace.sharedWorkspace()
+                    active_app = workspace.frontmostApplication()
+                    if active_app:
+                        ax_result["pid"] = active_app.processIdentifier()
+                except Exception:
+                    pass
             return ax_result
 
         # Secondary: Check window under mouse cursor (useful for multi-monitor)
@@ -342,7 +412,7 @@ def _get_window_macos() -> Optional[Dict[str, str]]:
         if not title:
             title = _get_window_title_cgwindow(app_pid)
 
-        result = {"app": app, "title": title}
+        result = {"app": app, "title": title, "pid": app_pid}
 
         # Enrich with focused UI element details (deep AX querying)
         focused_details = _get_focused_element_details()
@@ -356,6 +426,7 @@ def _get_window_macos() -> Optional[Dict[str, str]]:
         return None
 
 
+@_with_autorelease
 def _get_window_under_cursor() -> Optional[Dict[str, str]]:
     """Get the window under the mouse cursor (useful for multi-monitor setups)."""
     try:
@@ -414,6 +485,7 @@ def _get_window_under_cursor() -> Optional[Dict[str, str]]:
         return None
 
 
+@_with_autorelease
 def _get_focused_window_title_ax(pid: int) -> str:
     """Get focused window title using Accessibility API (most accurate)."""
     try:
@@ -443,6 +515,7 @@ def _get_focused_window_title_ax(pid: int) -> str:
         return ""
 
 
+@_with_autorelease
 def _get_window_title_cgwindow(pid: int) -> str:
     """Fallback: Get window title using CGWindowList (may not be focused window)."""
     try:
@@ -523,6 +596,189 @@ def _get_window_linux() -> Optional[Dict[str, str]]:
         return None
 
 
+@_with_autorelease
+def get_all_windows(resolve_terminal_cwd: bool = True) -> list:
+    """Get titles of all visible on-screen windows.
+
+    Returns list of {app, title, ...} for all visible windows (not just focused).
+    For terminal windows, also resolves cwd and project name so we know
+    what each terminal session is working on.
+    Only supported on macOS (uses CGWindowListCopyWindowInfo).
+    """
+    if sys.platform != "darwin":
+        return []
+
+    try:
+        from Quartz import (
+            CGWindowListCopyWindowInfo,
+            kCGNullWindowID,
+            kCGWindowListExcludeDesktopElements,
+            kCGWindowListOptionOnScreenOnly,
+        )
+    except ImportError:
+        return []
+
+    try:
+        options = (
+            kCGWindowListOptionOnScreenOnly
+            | kCGWindowListExcludeDesktopElements
+        )
+        window_list = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+
+        results = []
+        seen = set()
+        # Track PIDs we've already resolved CWD for (terminal apps share PID)
+        resolved_pids = {}
+
+        for w in window_list:
+            layer = w.get("kCGWindowLayer", 0)
+            if layer != 0:
+                continue  # Skip system UI layers
+
+            owner = w.get("kCGWindowOwnerName", "")
+            title = w.get("kCGWindowName", "")
+            if not owner:
+                continue
+
+            key = (owner, title)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            entry = {"app": owner, "title": title or ""}
+
+            # For terminal windows, resolve CWD and project
+            if resolve_terminal_cwd and _is_terminal_app_name(owner):
+                pid = w.get("kCGWindowOwnerPID")
+                if pid:
+                    if pid not in resolved_pids:
+                        resolved_pids[pid] = _resolve_terminal_cwds(pid)
+                    cwds = resolved_pids[pid]
+                    if cwds:
+                        # Use the first unmatched CWD (each shell child
+                        # corresponds roughly to a window/tab)
+                        cwd = cwds[0]
+                        entry["cwd"] = cwd
+                        from .document import extract_project_from_cwd
+                        project = extract_project_from_cwd(cwd)
+                        if project:
+                            entry["project"] = project
+
+            results.append(entry)
+
+        return results
+    except Exception as e:
+        logger.debug(f"Error getting all windows: {e}")
+        return []
+
+
+# Terminal app names for CWD resolution in get_all_windows
+_TERMINAL_APP_NAMES = {
+    "terminal", "iterm2", "iterm", "alacritty", "kitty",
+    "wezterm", "warp", "hyper", "konsole", "gnome-terminal",
+}
+
+
+def _is_terminal_app_name(app: str) -> bool:
+    """Check if an app name is a terminal emulator."""
+    return app.lower() in _TERMINAL_APP_NAMES
+
+
+def _resolve_terminal_cwds(terminal_pid: int) -> list:
+    """Get CWDs of all child shell processes under a terminal app.
+
+    Terminal apps spawn child shells (zsh, bash, fish) — one per tab/window.
+    Returns a list of CWD strings for each child shell found.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["pgrep", "-P", str(terminal_pid)],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode != 0:
+            return []
+
+        cwds = []
+        for pid_str in result.stdout.strip().split("\n"):
+            if not pid_str.strip():
+                continue
+            child_pid = int(pid_str.strip())
+            from .document import get_terminal_cwd
+            cwd = get_terminal_cwd(child_pid)
+            if cwd:
+                cwds.append(cwd)
+
+        return cwds
+    except Exception:
+        return []
+
+
+def get_window_fast() -> Optional[Dict[str, str]]:
+    """Get current window app and title only - lightweight for fast heartbeat.
+
+    Returns only {app, title} without deep AX queries, cursor detection,
+    or focused element details. Designed for 1s polling with minimal overhead.
+    """
+    if sys.platform == "win32":
+        return _get_window_fast_windows()
+    elif sys.platform == "darwin":
+        return _get_window_fast_macos()
+    else:
+        return _get_window_linux()  # Linux is already lightweight
+
+
+@_with_autorelease
+def _get_window_fast_macos() -> Optional[Dict[str, str]]:
+    """Fast macOS window capture - AX focused app + title, no deep queries."""
+    try:
+        # Try AX API first (gets focused app + window title without deep traversal)
+        ax_result = _get_focused_app_ax()
+        if ax_result and ax_result.get("app") not in _SYSTEM_APPS:
+            return {"app": ax_result["app"], "title": ax_result.get("title", "")}
+
+        # Fallback: NSWorkspace (just app name, may lack window title)
+        from AppKit import NSWorkspace
+
+        workspace = NSWorkspace.sharedWorkspace()
+        active_app = workspace.frontmostApplication()
+        if active_app:
+            app = active_app.localizedName() or "unknown"
+            if app not in _SYSTEM_APPS:
+                return {"app": app, "title": ""}
+
+        return {"app": "unknown", "title": ""}
+    except Exception as e:
+        logger.debug(f"Fast window capture error: {e}")
+        return None
+
+
+def _get_window_fast_windows() -> Optional[Dict[str, str]]:
+    """Fast Windows window capture - GetForegroundWindow only."""
+    try:
+        import win32gui
+        import win32process
+    except ImportError:
+        return None
+
+    try:
+        hwnd = win32gui.GetForegroundWindow()
+        if not hwnd:
+            return {"app": "unknown", "title": ""}
+
+        title = win32gui.GetWindowText(hwnd)
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        app = _get_app_name_windows(pid)
+
+        return {"app": app, "title": title}
+    except Exception as e:
+        logger.debug(f"Fast window capture error: {e}")
+        return None
+
+
 # Test the module directly
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
@@ -530,3 +786,7 @@ if __name__ == "__main__":
     print("Testing window capture...")
     result = get_current_window()
     print(f"Result: {result}")
+
+    print("\nTesting fast window capture...")
+    result = get_window_fast()
+    print(f"Fast result: {result}")

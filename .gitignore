@@ -129,3 +129,6 @@ tests/screenshots/
 .env.development
 .env.test
 .env.production
+
+# Rust build artifacts
+target/

@@ -184,8 +184,8 @@ create_config() {
 # See README.md for full documentation
 
 watcher:
-  poll_time: 5.0      # Seconds between checks
-  pulsetime: 6.0      # Heartbeat merge window
+  heartbeat_interval: 1.0  # Fast heartbeat for gap-free timeline (seconds)
+  poll_time: 5.0            # Enrichment capture base frequency (seconds)
 
 ocr:
   enabled: true
@@ -194,6 +194,11 @@ ocr:
   engine: auto
   extract_mode: keywords
   max_keywords: 20
+
+llm:
+  model: gemma3:4b
+  timeout: 10.0
+  enabled: true
 
 privacy:
   exclude_apps:

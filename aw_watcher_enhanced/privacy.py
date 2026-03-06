@@ -154,11 +154,12 @@ SENSITIVE_APPS = [
     r"roboform",
 ]
 
-
 def is_sensitive_app(app: str) -> bool:
     """Check if an app should always be treated as sensitive."""
     app_lower = app.lower()
     return any(re.search(pattern, app_lower) for pattern in SENSITIVE_APPS)
+
+
 
 
 # Test module

@@ -12,8 +12,9 @@ logger = logging.getLogger(__name__)
 # Default configuration
 DEFAULT_CONFIG: Dict[str, Any] = {
     "watcher": {
-        "poll_time": 5.0,
-        "pulsetime": 6.0,
+        "heartbeat_interval": 1.0,  # Fast heartbeat loop interval (timeline bucket)
+        "poll_time": 5.0,  # Enrichment capture frequency
+        "pulsetime": 6.0,  # Legacy; auto-calculated as heartbeat_interval + 1.0
     },
     "smart_capture": {
         "idle_threshold": 60.0,  # seconds before considered idle

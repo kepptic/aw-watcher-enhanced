@@ -40,10 +40,23 @@ DEFAULT_RULES: List[Dict[str, Any]] = [
         "match": {"url": r"stackoverflow\.com|docs\."},
         "category": "Work/Development/Research",
     },
+    # AI Coding Assistants
+    {
+        "match": {"title": r"claude\s*code|claude-code|anthropic.*claude"},
+        "category": "Work/Development/AI Assistant",
+    },
+    {
+        "match": {"app": r"cursor", "title": r"\."},
+        "category": "Work/Development/AI Assistant",
+    },
     # Communication
     {
         "match": {"app": r"slack|teams|discord|zoom"},
         "category": "Work/Communication/Chat",
+    },
+    {
+        "match": {"app": r"8x8.*work|ringcentral|dialpad|vonage|grasshopper"},
+        "category": "Work/Communication/VoIP",
     },
     {
         "match": {"url": r"mail\.google\.com|outlook\.(com|office)"},

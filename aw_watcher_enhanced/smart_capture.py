@@ -9,7 +9,7 @@ Features:
 - Efficient resource usage
 """
 
-import collections
+from collections import deque
 import hashlib
 import logging
 import queue
@@ -61,7 +61,7 @@ class OCRDiffDetector:
         self.min_change_chars = min_change_chars
         self.max_history = max_history
 
-        self._history: List[Tuple[str, str, float]] = []  # (hash, text, timestamp)
+        self._history: deque = deque(maxlen=max_history)  # (hash, text_snippet, timestamp)
         self._last_text: Optional[str] = None
         self._last_hash: Optional[str] = None
         self._last_keywords: set = set()
@@ -205,10 +205,8 @@ class OCRDiffDetector:
         self._last_hash = current_hash
         self._last_keywords = current_keywords
 
-        # Add to history
+        # Add to history (deque with maxlen auto-evicts oldest)
         self._history.append((current_hash, ocr_text[:500], time.time()))
-        if len(self._history) > self.max_history:
-            self._history.pop(0)
 
         self.stats["triggered_different"] += 1
         logger.debug("OCR content changed, running LLM")
@@ -239,7 +237,7 @@ class IdleDetector:
     def __init__(self):
         self._last_activity = time.time()
         self._idle_threshold = 60  # seconds
-        self._activity_samples: collections.deque = collections.deque(maxlen=300)
+        self._activity_samples: deque = deque(maxlen=300)
         self._setup_platform()
 
     def _setup_platform(self):
@@ -298,7 +296,7 @@ class IdleDetector:
 
     def is_idle(self, threshold_seconds: float = None) -> bool:
         """Check if user is idle."""
-        threshold = threshold_seconds or self._idle_threshold
+        threshold = threshold_seconds if threshold_seconds is not None else self._idle_threshold
         return self.get_idle_seconds() > threshold
 
     def set_threshold(self, seconds: float):
@@ -501,11 +499,6 @@ class SmartCaptureManager:
             self._consecutive_idle_count += 1
 
             # After 5 consecutive idle checks, stop capturing
-            if self._consecutive_idle_count >= 5:
-                self.stats["skipped_idle"] += 1
-                logger.debug(
-                    f"Skipping capture - user idle ({self.idle_detector.get_idle_seconds():.0f}s)"
-                )
             if self._consecutive_idle_count >= 5:
                 self.stats["skipped_idle"] += 1
                 logger.debug(
