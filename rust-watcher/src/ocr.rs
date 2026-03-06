@@ -162,6 +162,22 @@ mod macos {
     /// Capture the main display and run Vision OCR on it.
     pub fn capture_and_ocr(max_keywords: usize) -> Result<OcrResult, String> {
         unsafe {
+            // Create an autorelease pool to drain all autoreleased ObjC objects
+            // (NSArray, VNRecognizedText, etc.) created during OCR.
+            // Without this, autoreleased objects accumulate forever in non-main threads.
+            #[link(name = "objc", kind = "dylib")]
+            extern "C" {
+                fn objc_getClass(name: *const u8) -> *const c_void;
+                fn sel_registerName(name: *const u8) -> *const c_void;
+            }
+            extern "C" { fn objc_msgSend(); }
+            type MsgSend0 = unsafe extern "C" fn(*const c_void, *const c_void) -> *const c_void;
+            let send0: MsgSend0 = std::mem::transmute(objc_msgSend as *const c_void);
+            let pool = send0(
+                send0(objc_getClass(b"NSAutoreleasePool\0".as_ptr()), sel_registerName(b"alloc\0".as_ptr())),
+                sel_registerName(b"init\0".as_ptr()),
+            );
+
             // 1. Capture screen using CGWindowList (works without ScreenCaptureKit permission)
             let display_id = CGMainDisplayID();
             let bounds = CGDisplayBounds(display_id);
@@ -174,6 +190,7 @@ mod macos {
             );
 
             if image.is_null() {
+                send0(pool, sel_registerName(b"drain\0".as_ptr()));
                 return Err("Failed to capture screen".into());
             }
 
@@ -181,10 +198,15 @@ mod macos {
             let _height = CGImageGetHeight(image);
 
             // 2. Run Vision OCR using objc_msgSend
-            let text = run_vision_ocr(image)?;
+            let text = run_vision_ocr(image);
             CFRelease(image);
 
-            // 3. Extract keywords
+            // 3. Drain the autorelease pool before returning
+            send0(pool, sel_registerName(b"drain\0".as_ptr()));
+
+            let text = text?;
+
+            // 4. Extract keywords
             let keywords = extract_keywords(&text, max_keywords);
 
             Ok(OcrResult {

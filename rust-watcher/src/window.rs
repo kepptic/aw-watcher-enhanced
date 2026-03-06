@@ -1,8 +1,8 @@
 //! Cross-platform active window capture.
 //!
-//! On macOS: Uses Core Graphics (CGWindowList) and Accessibility APIs
-//! to get the focused app name and window title. All CF/AX objects are
-//! automatically released by Rust's ownership model — no autorelease pools needed.
+//! On macOS: Uses Accessibility APIs to get the focused app name and window title.
+//! All CF/AX objects are explicitly released. An autorelease pool wraps each call
+//! to drain any autoreleased ObjC objects (NSWorkspace fallback path).
 
 
 /// Basic window info.
@@ -98,13 +98,45 @@ mod macos {
     }
 
     pub fn get_current_window() -> Option<WindowInfo> {
-        // Try AX API first (gives both app name and window title)
-        if let Some(info) = get_via_ax() {
-            return Some(info);
-        }
+        unsafe {
+            // Autorelease pool to drain ObjC autoreleased objects per call.
+            // Called every 1s from the heartbeat thread — without this, objects leak.
+            let pool = create_autorelease_pool();
 
-        // Fallback to NSWorkspace (always works, but no window title)
-        get_via_nsworkspace()
+            let result = if let Some(info) = get_via_ax() {
+                Some(info)
+            } else {
+                get_via_nsworkspace()
+            };
+
+            drain_autorelease_pool(pool);
+            result
+        }
+    }
+
+    unsafe fn create_autorelease_pool() -> *const c_void {
+        #[link(name = "objc", kind = "dylib")]
+        extern "C" {
+            fn objc_getClass(name: *const u8) -> *const c_void;
+            fn sel_registerName(name: *const u8) -> *const c_void;
+        }
+        extern "C" { fn objc_msgSend(); }
+        type Send0 = unsafe extern "C" fn(*const c_void, *const c_void) -> *const c_void;
+        let s: Send0 = std::mem::transmute(objc_msgSend as *const c_void);
+        s(
+            s(objc_getClass(b"NSAutoreleasePool\0".as_ptr()), sel_registerName(b"alloc\0".as_ptr())),
+            sel_registerName(b"init\0".as_ptr()),
+        )
+    }
+
+    unsafe fn drain_autorelease_pool(pool: *const c_void) {
+        extern "C" {
+            fn sel_registerName(name: *const u8) -> *const c_void;
+        }
+        extern "C" { fn objc_msgSend(); }
+        type Send0 = unsafe extern "C" fn(*const c_void, *const c_void) -> *const c_void;
+        let s: Send0 = std::mem::transmute(objc_msgSend as *const c_void);
+        s(pool, sel_registerName(b"drain\0".as_ptr()));
     }
 
     /// Get window info via Accessibility API (requires permission).

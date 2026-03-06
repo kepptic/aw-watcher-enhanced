@@ -183,6 +183,9 @@ mod macos {
         let mut last_app: Option<String> = None;
 
         while running.load(std::sync::atomic::Ordering::SeqCst) {
+            // Autorelease pool per iteration — NSWorkspace calls create autoreleased objects
+            let pool = unsafe { create_autorelease_pool() };
+
             // Check frontmost application
             if let Some(app_name) = get_frontmost_app() {
                 let changed = last_app.as_ref() != Some(&app_name);
@@ -215,10 +218,24 @@ mod macos {
                 }
             }
 
+            unsafe { drain_autorelease_pool(pool) };
             thread::sleep(std::time::Duration::from_secs(1));
         }
 
         info!("OS event loop stopped");
+    }
+
+    unsafe fn create_autorelease_pool() -> *const c_void {
+        let s: MsgSend0 = send0();
+        s(
+            s(cls!("NSAutoreleasePool"), sel!("alloc")),
+            sel!("init"),
+        )
+    }
+
+    unsafe fn drain_autorelease_pool(pool: *const c_void) {
+        let s: MsgSend0 = send0();
+        s(pool, sel!("drain"));
     }
 
     /// Get the frontmost application name using NSWorkspace.
