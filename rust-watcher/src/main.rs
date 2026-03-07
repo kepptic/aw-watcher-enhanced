@@ -409,6 +409,10 @@ fn main() {
             .spawn(move || {
                 info!("Heartbeat thread started ({}s interval)", config.watcher.heartbeat_interval);
                 let mut last_window: Option<(String, String)> = None;
+                // Cache the last enriched data so every heartbeat sends consistent fields.
+                // Without this, heartbeats alternate between 2-key basic and 22-key enriched
+                // data, preventing the server from merging them into continuous events.
+                let mut last_enriched: Option<serde_json::Map<String, serde_json::Value>> = None;
                 let mut idle_detector = idle::IdleDetector::new(config.smart_capture.idle_threshold);
                 let sleep_ms = (config.watcher.heartbeat_interval * 1000.0) as u64;
                 let pulsetime = config.watcher.heartbeat_interval + 1.0;
@@ -436,6 +440,7 @@ fn main() {
                             state.enriched_data = None;
                             state.enriched_window_key = None;
                         }
+                        last_enriched = None;
                         // Signal enrichment thread
                         window_changed.store(true, Ordering::SeqCst);
                         debug!(
@@ -445,14 +450,21 @@ fn main() {
                         );
                     }
 
-                    // Build event data — merge enriched state if available
+                    // Build event data — use enriched state if available, else reuse
+                    // the last known enriched data so the server can merge heartbeats.
                     let data = if let Ok(state) = shared.lock() {
                         if state.enriched_window_key.as_ref() == Some(&current_key) {
                             if let Some(ref enriched) = state.enriched_data {
+                                last_enriched = Some(enriched.clone());
                                 enriched.clone()
+                            } else if let Some(ref cached) = last_enriched {
+                                cached.clone()
                             } else {
                                 basic_event_data(&window)
                             }
+                        } else if let Some(ref cached) = last_enriched {
+                            // Same window, enrichment thread hasn't updated yet — reuse cache
+                            cached.clone()
                         } else {
                             basic_event_data(&window)
                         }
