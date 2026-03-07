@@ -67,6 +67,16 @@ fn main() {
 
     info!("Starting {WATCHER_NAME}");
 
+    // Check Accessibility permission (macOS) — required for AX API window capture.
+    // If not granted, opens System Settings prompt for the user to approve.
+    #[cfg(target_os = "macos")]
+    {
+        if !check_accessibility_permission() {
+            warn!("Accessibility permission not granted — window titles will be unavailable");
+            warn!("Please grant access in System Settings → Privacy & Security → Accessibility");
+        }
+    }
+
     // Load configuration
     let config = config::load_config();
     info!(
@@ -485,4 +495,63 @@ fn basic_event_data(window: &WindowInfo) -> serde_json::Map<String, serde_json::
     m.insert("app".into(), window.app.clone().into());
     m.insert("title".into(), window.title.clone().into());
     m
+}
+
+/// Check macOS Accessibility permission and prompt the user if not granted.
+/// Returns true if permission is already granted.
+#[cfg(target_os = "macos")]
+fn check_accessibility_permission() -> bool {
+    use std::ffi::c_void;
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFDictionaryCreate(
+            allocator: *const c_void,
+            keys: *const *const c_void,
+            values: *const *const c_void,
+            num_values: isize,
+            key_callbacks: *const c_void,
+            value_callbacks: *const c_void,
+        ) -> *const c_void;
+        fn CFRelease(cf: *const c_void);
+        static kCFTypeDictionaryKeyCallBacks: c_void;
+        static kCFTypeDictionaryValueCallBacks: c_void;
+        static kCFBooleanTrue: *const c_void;
+    }
+
+    extern "C" {
+        // This key is in ApplicationServices but we need to reference it directly
+        static kAXTrustedCheckOptionPrompt: *const c_void;
+        fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
+    }
+
+    unsafe {
+        // Quick check first — avoid showing the prompt if already trusted
+        if AXIsProcessTrusted() {
+            info!("Accessibility permission: granted");
+            return true;
+        }
+
+        // Not trusted — show the system prompt
+        info!("Accessibility permission: not granted, requesting...");
+        let keys = [kAXTrustedCheckOptionPrompt];
+        let values = [kCFBooleanTrue];
+        let options = CFDictionaryCreate(
+            std::ptr::null(),
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            &kCFTypeDictionaryKeyCallBacks as *const c_void,
+            &kCFTypeDictionaryValueCallBacks as *const c_void,
+        );
+
+        let trusted = AXIsProcessTrustedWithOptions(options);
+        CFRelease(options);
+        trusted
+    }
 }
