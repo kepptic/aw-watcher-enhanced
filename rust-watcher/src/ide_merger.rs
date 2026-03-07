@@ -120,23 +120,39 @@ impl IdeDataMerger {
         }
 
         for (source, bucket_id) in &self.ide_buckets {
-            match client.get_events(bucket_id, 1) {
+            // Fetch several recent events — multiple VS Code windows share the same
+            // bucket, so we need to find the focused one, not just the most recent.
+            match client.get_events(bucket_id, 5) {
                 Ok(events) => {
                     if events.is_empty() {
                         continue;
                     }
-                    let event = &events[0];
 
-                    // Check freshness
-                    let age = (Utc::now() - event.timestamp).num_seconds() as f64;
-                    if age > MAX_EVENT_AGE {
-                        continue;
+                    // Prefer the most recent focused event; fall back to most recent overall
+                    let mut best_event = None;
+                    let mut best_focused = None;
+
+                    for event in &events {
+                        let age = (Utc::now() - event.timestamp).num_seconds() as f64;
+                        if age > MAX_EVENT_AGE {
+                            continue;
+                        }
+                        if best_event.is_none() {
+                            best_event = Some(event);
+                        }
+                        if event.data.get("is_focused").and_then(|v| v.as_bool()) == Some(true) {
+                            best_focused = Some(event);
+                            break; // Most recent focused event wins
+                        }
                     }
 
-                    if let Some(ide_data) = extract_ide_fields(&event.data, source) {
-                        self.cache = Some(ide_data.clone());
-                        self.cache_time = now;
-                        return Some(ide_data);
+                    let event = best_focused.or(best_event);
+                    if let Some(event) = event {
+                        if let Some(ide_data) = extract_ide_fields(&event.data, source) {
+                            self.cache = Some(ide_data.clone());
+                            self.cache_time = now;
+                            return Some(ide_data);
+                        }
                     }
                 }
                 Err(e) => {
