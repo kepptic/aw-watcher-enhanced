@@ -5,10 +5,17 @@
 
 use std::time::Instant;
 
+use chrono::Utc;
 use log::debug;
 use url::Url;
 
 use crate::aw_client::AwClient;
+
+/// Max age (seconds) before a web bucket event is considered stale.
+/// The web extension stops heartbeating when the tab hasn't changed,
+/// so we use a generous window. The caller only queries when the active
+/// app is a browser, so the event is likely still the current tab.
+const MAX_WEB_EVENT_AGE: f64 = 120.0;
 
 /// Known browser app names (lowercase).
 const BROWSER_APPS: &[&str] = &[
@@ -114,6 +121,17 @@ impl BrowserDataMerger {
                         continue;
                     }
                     let event = &events[0];
+
+                    // Check freshness — stale web events shouldn't be merged.
+                    // Use timestamp + duration as the effective end time, since
+                    // the web extension uses pulse merging (duration gets extended).
+                    let effective_end = event.timestamp
+                        + chrono::Duration::milliseconds((event.duration * 1000.0) as i64);
+                    let age = (Utc::now() - effective_end).num_seconds() as f64;
+                    if age > MAX_WEB_EVENT_AGE {
+                        continue;
+                    }
+
                     let url = event
                         .data
                         .get("url")

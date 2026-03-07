@@ -247,12 +247,16 @@ fn main() {
                         let category = categorizer::categorize(&info.app, &info.title);
                         data.insert("category".into(), category.into());
 
-                        // Browser data merge
+                        // Browser data merge — use web extension's URL/title
                         if config.browser.enabled && browser::is_browser_app(&info.app) {
                             if let Some(bd) = browser_merger.get_browser_data(&client) {
                                 data.insert("url".into(), bd.url.into());
                                 data.insert("domain".into(), bd.domain.into());
-                                data.insert("tab_title".into(), bd.tab_title.into());
+                                // Use the web extension's clean tab title instead of
+                                // the AX API window title (which has browser suffix)
+                                if !bd.tab_title.is_empty() {
+                                    data.insert("title".into(), bd.tab_title.into());
+                                }
                             }
                         }
 
