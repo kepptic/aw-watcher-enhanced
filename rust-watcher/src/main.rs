@@ -50,11 +50,22 @@ struct Args {
 
 /// Shared state between heartbeat and enrichment threads.
 struct SharedState {
-    /// Enriched event data from the enrichment thread.
+    /// Stable enriched data for heartbeat merging (excludes volatile fields).
     enriched_data: Option<serde_json::Map<String, serde_json::Value>>,
     /// The (app, title) key the enriched data belongs to.
     enriched_window_key: Option<(String, String)>,
 }
+
+/// Fields that change every enrichment cycle (OCR, file activity, OS events).
+/// These break pulse merging and are sent to a separate snapshot bucket.
+const VOLATILE_KEYS: &[&str] = &[
+    "ocr_keywords",
+    "ocr_summary",
+    "ocr_project",
+    "ocr_client",
+    "recent_files",
+    "os_events",
+];
 
 fn main() {
     let args = Args::parse();
@@ -117,10 +128,14 @@ fn main() {
         thread::sleep(Duration::from_secs(1));
     }
 
-    // Create bucket
+    // Create buckets — main (stable, mergeable) + snapshot (volatile OCR/files)
     if let Err(e) = client.create_bucket(&bucket_id, "currentwindow") {
         error!("Failed to create bucket: {e}");
         std::process::exit(1);
+    }
+    let snapshot_bucket_id = format!("{}_snapshot_{}", WATCHER_NAME, client.hostname);
+    if let Err(e) = client.create_bucket(&snapshot_bucket_id, "enrichment-snapshot") {
+        warn!("Failed to create snapshot bucket: {e} — volatile data won't be stored");
     }
     info!("Bucket ready: {bucket_id}");
 
@@ -151,6 +166,7 @@ fn main() {
         let config = config.clone();
         let file_tracker = file_tracker.clone();
         let no_ocr = args.no_ocr;
+        let snapshot_bucket_id = snapshot_bucket_id.clone();
 
         thread::Builder::new()
             .name("enrichment".into())
@@ -243,21 +259,37 @@ fn main() {
                             }
                         }
 
-                        // Categorize
-                        let category = categorizer::categorize(&info.app, &info.title);
-                        data.insert("category".into(), category.into());
-
                         // Browser data merge — use web extension's URL/title
+                        let mut url = String::new();
+                        let mut domain = String::new();
+                        let mut effective_title = info.title.clone();
                         if config.browser.enabled && browser::is_browser_app(&info.app) {
                             if let Some(bd) = browser_merger.get_browser_data(&client) {
+                                url = bd.url.clone();
+                                domain = bd.domain.clone();
                                 data.insert("url".into(), bd.url.into());
                                 data.insert("domain".into(), bd.domain.into());
                                 // Use the web extension's clean tab title instead of
                                 // the AX API window title (which has browser suffix)
                                 if !bd.tab_title.is_empty() {
+                                    effective_title = bd.tab_title.clone();
                                     data.insert("title".into(), bd.tab_title.into());
                                 }
                             }
+                        }
+
+                        // Categorize (after browser merge so URL/domain are available)
+                        let category = categorizer::categorize_with_url(
+                            &info.app, &effective_title, &url, &domain,
+                        );
+                        data.insert("category".into(), category.into());
+
+                        // Extract IT client/tenant from known management tool URLs
+                        if let Some((client_name, tool)) =
+                            categorizer::extract_it_client(&url, &domain, &effective_title)
+                        {
+                            data.insert("it_client".into(), client_name.into());
+                            data.insert("it_tool".into(), tool.into());
                         }
 
                         // IDE data merge (before AI detection — provides terminal context)
@@ -380,11 +412,36 @@ fn main() {
                             data.insert("os_events".into(), events_json.into());
                         }
 
-                        // Store enriched state
-                        let key = (info.app.clone(), info.title.clone());
+                        // Separate volatile fields (OCR, files, OS events) from stable data.
+                        // Heartbeat thread only sends stable fields so aw-server can pulse-merge.
+                        let mut volatile = serde_json::Map::new();
+                        for &key in VOLATILE_KEYS {
+                            if let Some(v) = data.remove(key) {
+                                volatile.insert(key.into(), v);
+                            }
+                        }
+
+                        // Send volatile data to snapshot bucket (once per enrichment cycle)
+                        if !volatile.is_empty() {
+                            // Include app/title for context
+                            volatile.insert("app".into(), info.app.clone().into());
+                            volatile.insert("title".into(), info.title.clone().into());
+                            let snap_event = Event {
+                                timestamp: Utc::now(),
+                                duration: 0.0,
+                                data: volatile,
+                            };
+                            let snap_pulse = config.watcher.poll_time + 1.0;
+                            if let Err(e) = client.heartbeat(&snapshot_bucket_id, &snap_event, snap_pulse) {
+                                debug!("Snapshot heartbeat failed: {e}");
+                            }
+                        }
+
+                        // Store stable enriched state for heartbeat merging
+                        let wkey = (info.app.clone(), info.title.clone());
                         if let Ok(mut state) = shared.lock() {
                             state.enriched_data = Some(data);
-                            state.enriched_window_key = Some(key);
+                            state.enriched_window_key = Some(wkey);
                         }
 
                         debug!(
@@ -464,16 +521,16 @@ fn main() {
                             } else if let Some(ref cached) = last_enriched {
                                 cached.clone()
                             } else {
-                                basic_event_data(&window)
+                                quick_enriched_data(&window)
                             }
                         } else if let Some(ref cached) = last_enriched {
                             // Same window, enrichment thread hasn't updated yet — reuse cache
                             cached.clone()
                         } else {
-                            basic_event_data(&window)
+                            quick_enriched_data(&window)
                         }
                     } else {
-                        basic_event_data(&window)
+                        quick_enriched_data(&window)
                     };
 
                     let event = Event {
@@ -506,10 +563,34 @@ fn main() {
     info!("{WATCHER_NAME} stopped");
 }
 
-fn basic_event_data(window: &WindowInfo) -> serde_json::Map<String, serde_json::Value> {
+/// Build event data with cheap enrichment (no network/OCR).
+/// Includes category and document context so the first heartbeat after
+/// a window change has enough fields to merge with later enriched heartbeats.
+fn quick_enriched_data(window: &WindowInfo) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     m.insert("app".into(), window.app.clone().into());
     m.insert("title".into(), window.title.clone().into());
+
+    // Document context (pure string parsing, no I/O)
+    if let Some(doc) = document::parse_document_context(&window.app, &window.title) {
+        if let Some(f) = &doc.filename {
+            m.insert("doc_file".into(), f.clone().into());
+        }
+        if let Some(p) = &doc.project {
+            m.insert("doc_project".into(), p.clone().into());
+        }
+        if let Some(t) = &doc.doc_type {
+            m.insert("doc_type".into(), t.clone().into());
+        }
+        if let Some(e) = &doc.extension {
+            m.insert("doc_ext".into(), e.clone().into());
+        }
+    }
+
+    // Category (pure function)
+    let category = categorizer::categorize_with_url(&window.app, &window.title, "", "");
+    m.insert("category".into(), category.into());
+
     m
 }
 
