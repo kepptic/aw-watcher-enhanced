@@ -292,6 +292,13 @@ fn main() {
                             data.insert("it_tool".into(), tool.into());
                         }
 
+                        // Extract remote host for RDP/remote desktop sessions
+                        if let Some(host) =
+                            categorizer::extract_remote_host(&info.app, &effective_title)
+                        {
+                            data.insert("remote_host".into(), host.into());
+                        }
+
                         // IDE data merge (before AI detection — provides terminal context)
                         if let Some(ide_data) = ide_merger.get_ide_data(&client, &info.app) {
                             for (k, v) in ide_data.fields {

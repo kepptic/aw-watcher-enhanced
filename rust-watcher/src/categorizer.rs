@@ -29,17 +29,19 @@ pub fn categorize_with_url(app: &str, title: &str, url: &str, domain: &str) -> &
         return "terminal";
     }
 
+    // Remote Desktop — detect before browser since RDP apps aren't browsers
+    if is_remote_desktop_app(&app_lower) {
+        return "remote-desktop";
+    }
+
     // Browser — subcategorize by title, URL, and domain
     if is_browser_app(&app_lower) {
         return categorize_browser(&title_lower, url, domain);
     }
 
-    // Communication
+    // Communication / Meeting
     if is_communication_app(&app_lower) {
-        if title_lower.contains("meeting")
-            || title_lower.contains("call")
-            || title_lower.contains("huddle")
-        {
+        if is_meeting_context(&app_lower, &title_lower) {
             return "meeting";
         }
         return "communication";
@@ -125,17 +127,68 @@ fn is_browser_app(app: &str) -> bool {
     )
 }
 
+fn is_remote_desktop_app(app: &str) -> bool {
+    app.contains("remote desktop")
+        || app.contains("microsoft remote")
+        || app.contains("windows app")
+        || app.contains("rd client")
+        || app.contains("mstsc")
+        || app.contains("citrix")
+        || app.contains("citrix workspace")
+        || app.contains("vmware horizon")
+        || app.contains("parallels")
+        || app.contains("anydesk")
+        || app.contains("teamviewer")
+        || app.contains("rustdesk")
+        || app.contains("parsec")
+        || app.contains("splashtop")
+        || app.contains("connectwise control")
+        || app.contains("screenconnect")
+        || app.contains("datto rmm")
+}
+
 fn is_communication_app(app: &str) -> bool {
     app.contains("slack")
         || app.contains("teams")
         || app.contains("discord")
         || app.contains("zoom")
+        || app.contains("8x8")
+        || app.contains("virtual office")
         || app.contains("skype")
         || app.contains("facetime")
         || app.contains("messages")
         || app.contains("telegram")
         || app.contains("signal")
         || app.contains("whatsapp")
+        || app.contains("webex")
+        || app.contains("ringcentral")
+        || app.contains("goto")
+}
+
+/// Detect if a communication app is in a meeting/call context.
+fn is_meeting_context(app: &str, title: &str) -> bool {
+    // Zoom: "Zoom Meeting" in title when in a call
+    if app.contains("zoom") {
+        return title.contains("meeting")
+            || title.contains("zoom meeting")
+            || title.contains("webinar");
+    }
+    // Teams: various meeting indicators
+    if app.contains("teams") {
+        return title.contains("meeting")
+            || title.contains("call")
+            || title.contains("| meeting");
+    }
+    // 8x8: meeting/call context
+    if app.contains("8x8") || app.contains("virtual office") {
+        return title.contains("meeting")
+            || title.contains("call")
+            || title.contains("room");
+    }
+    // Generic
+    title.contains("meeting")
+        || title.contains("call")
+        || title.contains("huddle")
 }
 
 fn is_design_app(app: &str) -> bool {
@@ -309,15 +362,64 @@ fn categorize_browser(title: &str, url: &str, domain: &str) -> &'static str {
         return "social";
     }
 
-    // Meeting
-    if title.contains("meet.google")
-        || title.contains("zoom")
+    // Meeting (browser-based)
+    if domain_lower.contains("meet.google.com")
+        || domain_lower.contains("zoom.us")
+        || domain_lower.contains("teams.microsoft.com") && title.contains("meeting")
+        || domain_lower.contains("8x8.vc")
+        || domain_lower.contains("jitsi")
+        || title.contains("zoom meeting")
         || title.contains("teams meeting")
+        || title.contains("google meet")
     {
         return "meeting";
     }
 
+    // Communication (browser-based) — 8x8, Teams chat, etc.
+    if domain_lower.contains("teams.microsoft.com")
+        || domain_lower.contains("8x8.com")
+        || domain_lower.contains("app.8x8.com")
+        || domain_lower.contains("webex.com")
+        || domain_lower.contains("ringcentral.com")
+    {
+        return "communication";
+    }
+
+    // Remote desktop (browser-based)
+    if domain_lower.contains("remotedesktop.google.com")
+        || domain_lower.contains("gotomypc")
+        || domain_lower.contains("screenconnect")
+        || domain_lower.contains("connectwise.com") && url_lower.contains("control")
+    {
+        return "remote-desktop";
+    }
+
     "browsing"
+}
+
+/// Extract the remote host name from a Remote Desktop window title.
+/// Common patterns: "DC01 - Remote Desktop Connection", "PC01 - Windows App", "user@host"
+pub fn extract_remote_host(app: &str, title: &str) -> Option<String> {
+    let app_lower = app.to_lowercase();
+    if !is_remote_desktop_app(&app_lower) {
+        return None;
+    }
+    let title_clean = title.trim();
+    // "HOSTNAME - Remote Desktop" / "HOSTNAME - Windows App" / "HOSTNAME - Citrix"
+    if let Some(idx) = title_clean.find(" - ") {
+        let host = title_clean[..idx].trim();
+        if !host.is_empty() && host.len() < 64 {
+            return Some(host.to_string());
+        }
+    }
+    // "user@hostname" pattern (SSH-like)
+    if let Some(idx) = title_clean.find('@') {
+        let host = title_clean[idx + 1..].split_whitespace().next().unwrap_or("");
+        if !host.is_empty() {
+            return Some(host.to_string());
+        }
+    }
+    None
 }
 
 /// Extract client/tenant name from known IT management tool URLs.
@@ -436,6 +538,41 @@ mod tests {
     fn test_communication() {
         assert_eq!(categorize("Slack", "general"), "communication");
         assert_eq!(categorize("Slack", "Huddle with team"), "meeting");
+        assert_eq!(categorize("8x8 Work", "Contacts"), "communication");
+        assert_eq!(categorize("8x8 Work", "Active Call - John"), "meeting");
+        assert_eq!(categorize("8x8 Work", "Meeting Room"), "meeting");
+    }
+
+    #[test]
+    fn test_meeting_detection() {
+        assert_eq!(categorize("zoom.us", "Zoom Meeting"), "meeting");
+        assert_eq!(categorize("Microsoft Teams", "Team call with dev"), "meeting");
+        assert_eq!(categorize("Microsoft Teams", "#general"), "communication");
+    }
+
+    #[test]
+    fn test_remote_desktop() {
+        assert_eq!(categorize("Microsoft Remote Desktop", "DC01 - RDP"), "remote-desktop");
+        assert_eq!(categorize("Windows App", "SERVER01"), "remote-desktop");
+        assert_eq!(categorize("Citrix Workspace", "VDI Session"), "remote-desktop");
+        assert_eq!(categorize("AnyDesk", "123456"), "remote-desktop");
+        assert_eq!(categorize("ConnectWise Control", "Client PC"), "remote-desktop");
+    }
+
+    #[test]
+    fn test_remote_host_extraction() {
+        assert_eq!(
+            extract_remote_host("Microsoft Remote Desktop", "DC01 - Remote Desktop Connection"),
+            Some("DC01".into())
+        );
+        assert_eq!(
+            extract_remote_host("Windows App", "SERVER01 - Windows App"),
+            Some("SERVER01".into())
+        );
+        assert_eq!(
+            extract_remote_host("Google Chrome", "some page"),
+            None
+        );
     }
 
     #[test]
