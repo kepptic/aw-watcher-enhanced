@@ -9,213 +9,102 @@ cd installer/macos
 
 Or with options:
 ```bash
-./install.sh --service --venv
+./install.sh --service    # Also install launchd auto-start service
+./install.sh --prebuilt   # Skip compilation, use existing binary
 ```
 
-## Installation Options
+## Requirements
 
-| Option | Description |
-|--------|-------------|
-| `--service`, `-s` | Install as launchd service (auto-start at login) |
-| `--venv`, `-v` | Create and use a Python virtual environment |
-| `--help`, `-h` | Show help message |
+- **macOS 12+** (Monterey or later)
+- **Rust toolchain** — install from [rustup.rs](https://rustup.rs)
+- **ActivityWatch** — installed and running
 
 ## What Gets Installed
 
-1. **Python Package**: `aw-watcher-enhanced` with macOS dependencies
-2. **Configuration**: `~/Library/Application Support/activitywatch/aw-watcher-enhanced/config.yaml`
-3. **Logs**: `~/Library/Logs/activitywatch/`
+1. **Binary**: `/usr/local/bin/aw-watcher-enhanced` (~6.5MB native binary)
+2. **Configuration**: `~/Library/Application Support/activitywatch/aw-watcher-enhanced/config.toml`
+3. **aw-qt registration**: Added to `aw-qt.toml` autostart modules
 4. **LaunchAgent** (optional): `~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist`
 
 ## Permissions Required
 
 ### Accessibility Access (Required)
-Window title capture requires Accessibility permissions:
-
-1. Open **System Preferences** > **Security & Privacy** > **Privacy**
-2. Select **Accessibility** in the left panel
-3. Click the lock icon and enter your password
-4. Add **Terminal.app** (or your terminal app) to the list
-5. If using the launchd service, also add **Python**
+Window title and app detection:
+1. Open **System Settings** > **Privacy & Security** > **Accessibility**
+2. Add your terminal app (Terminal.app, iTerm, etc.)
+3. If using launchd service, also add the binary
 
 ### Screen Recording (Required for OCR)
-Screen capture for OCR requires Screen Recording permissions:
+Screen capture for text extraction:
+1. Open **System Settings** > **Privacy & Security** > **Screen Recording**
+2. Add your terminal app and/or the binary
 
-1. Open **System Preferences** > **Security & Privacy** > **Privacy**
-2. Select **Screen Recording** in the left panel
-3. Add **Terminal.app** and/or **Python** to the list
-
-## Running Manually
+## Running
 
 ```bash
-# Basic usage
+# Standard
 aw-watcher-enhanced
 
-# With verbose logging
-aw-watcher-enhanced --verbose
+# Debug logging
+RUST_LOG=debug aw-watcher-enhanced
 
-# Without OCR (less CPU usage)
-aw-watcher-enhanced --no-ocr
-
-# Test mode (uses port 5666)
+# Test mode (port 5666)
 aw-watcher-enhanced --testing
 ```
 
-## LaunchD Service Management
+## LaunchD Service
 
-### Check Status
 ```bash
+# Status
 launchctl list | grep aw-watcher
-```
 
-### View Logs
-```bash
-# Standard output
+# Logs
 tail -f ~/Library/Logs/activitywatch/aw-watcher-enhanced.log
 
-# Errors
-tail -f ~/Library/Logs/activitywatch/aw-watcher-enhanced.error.log
-```
-
-### Stop Service
-```bash
-launchctl unload ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
-```
-
-### Start Service
-```bash
-launchctl load ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
-```
-
-### Restart Service
-```bash
+# Stop / Start / Restart
 launchctl unload ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
 launchctl load ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
-```
-
-### Remove Service
-```bash
-launchctl unload ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
-rm ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
-```
-
-## Multi-Monitor Support
-
-The watcher supports multiple monitors for OCR capture. To enable:
-
-Edit `~/Library/Application Support/activitywatch/aw-watcher-enhanced/config.yaml`:
-
-```yaml
-ocr:
-  enabled: true
-  capture_all_monitors: true  # Enable multi-monitor OCR
-  trigger: window_change
-```
-
-**Note**: Multi-monitor OCR uses more CPU. Consider using `window_change` trigger instead of `periodic` to reduce load.
-
-## RAG Database Integration
-
-The watcher automatically integrates with your RAG database for client detection. It looks for the database at:
-
-```
-~/Library/CloudStorage/Dropbox/Documents++/Work documents/Kepptic/Time Tracking/AW-Watcher Logs/cache/
-```
-
-Features:
-- **Domain-based detection**: Recognizes clients from website domains
-- **Email-based detection**: Identifies clients from email addresses
-- **Text-based detection**: Finds client codes in window titles and OCR content
-- **Project code detection**: Extracts project codes (e.g., P202502-539)
-
-To disable RAG integration, edit config.yaml:
-
-```yaml
-categorization:
-  use_rag: false
 ```
 
 ## Configuration
 
-Full configuration file location:
-```
-~/Library/Application Support/activitywatch/aw-watcher-enhanced/config.yaml
-```
+Config file: `~/Library/Application Support/activitywatch/aw-watcher-enhanced/config.toml`
 
-### Example Configuration
+```toml
+[watcher]
+poll_time = 5.0        # Enrichment frequency (seconds)
+heartbeat_time = 1.0   # Heartbeat interval (seconds)
 
-```yaml
-watcher:
-  poll_time: 5.0      # Seconds between checks
-  pulsetime: 6.0      # Heartbeat merge window
+[ocr]
+enabled = true
+min_interval = 10.0    # Min seconds between OCR captures
+max_keywords = 20
 
-ocr:
-  enabled: true
-  trigger: window_change  # window_change, periodic, or both
-  periodic_interval: 30   # Seconds (if periodic)
-  capture_all_monitors: false  # Set true for multi-monitor
-  engine: auto            # auto or tesseract
-  extract_mode: keywords  # keywords, entities, or full_text
-  max_keywords: 20
+[llm]
+enabled = true
+model = "gemma3:1b"    # Ollama model (requires Ollama running)
+timeout = 10.0
 
-privacy:
-  exclude_apps:
-    - "1Password 7"
-    - "Keychain Access"
-    - "System Preferences"
-  exclude_titles:
-    - ".*[Pp]assword.*"
-    - ".*[Pp]rivate.*"
-  exclude_urls:
-    - ".*bank.*"
-
-categorization:
-  enabled: true
-  use_rag: true  # Use RAG database for client detection
+[privacy]
+exclude_apps = ["1Password", "Keychain Access"]
+exclude_titles = [".*[Pp]assword.*"]
 ```
 
-## Troubleshooting
+## Features
 
-### "Operation not permitted" errors
-Grant Accessibility and Screen Recording permissions as described above.
-
-### Service doesn't start
-1. Check logs: `tail -f ~/Library/Logs/activitywatch/aw-watcher-enhanced.error.log`
-2. Verify ActivityWatch is running: `curl http://localhost:5600/api/0/info`
-3. Try running manually first: `aw-watcher-enhanced --verbose`
-
-### OCR not working
-1. Grant Screen Recording permission
-2. Install Tesseract: `brew install tesseract`
-3. Install Python OCR deps: `pip install pytesseract Pillow mss`
-
-### High CPU usage
-1. Disable multi-monitor OCR
-2. Change trigger to `window_change` instead of `periodic`
-3. Increase `poll_time` to 10 seconds
-4. Disable OCR entirely with `--no-ocr`
-
-### RAG database not found
-Ensure the path exists:
-```bash
-ls ~/Library/CloudStorage/Dropbox/Documents++/Work\ documents/DAG\ Tech/Time\ Tracking/AW-Watcher\ Logs/cache/
-```
+- **Window tracking** — app name, title, category via AXUIElement API
+- **OCR** — focused-window capture via ScreenCaptureKit + Apple Vision
+- **LLM enrichment** — Ollama-powered keyword/project/client extraction
+- **Document context** — file, project, language from IDE titles
+- **Browser integration** — URL merge from aw-watcher-web extension
+- **Remote Desktop detection** — Microsoft Remote Desktop, AnyDesk, TeamViewer, etc.
+- **Meeting detection** — Zoom, Teams, 8x8, WebEx context awareness
+- **IT management** — Datto RMM, ConnectWise, NinjaOne client extraction
+- **Calendar integration** — EventKit current meeting detection
+- **Snapshot bucket** — volatile OCR/LLM data separated for clean timeline
 
 ## Uninstall
 
 ```bash
 ./uninstall.sh
-```
-
-Or manually:
-```bash
-# Stop and remove service
-launchctl unload ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
-rm ~/Library/LaunchAgents/com.kepptic.aw-watcher-enhanced.plist
-
-# Remove config (optional)
-rm -rf ~/Library/Application\ Support/activitywatch/aw-watcher-enhanced
-
-# Uninstall package (optional)
-pip uninstall aw-watcher-enhanced
 ```
