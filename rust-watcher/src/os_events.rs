@@ -1,13 +1,13 @@
 #![allow(dead_code)]
-//! macOS system event listener for aw-watcher-enhanced.
+//! Cross-platform system event listener for aw-watcher-enhanced.
 //!
-//! Captures app lifecycle events via NSWorkspace notifications:
+//! Captures app lifecycle events:
 //! - App activated/deactivated
 //! - Screen lock/unlock
-//! - System sleep/wake
 //!
-//! Uses objc2-app-kit bindings. Event-driven (zero polling cost).
-//! All events stored in a thread-safe deque for the enrichment thread.
+//! macOS: Polls NSWorkspace.frontmostApplication
+//! Windows: Polls GetForegroundWindow + process name
+//! Events stored in a thread-safe deque for the enrichment thread.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -44,8 +44,8 @@ impl OsEventListener {
 
     /// Start the event listener thread.
     pub fn start(&mut self) {
-        if !cfg!(target_os = "macos") {
-            info!("OS event listener only supported on macOS");
+        if !cfg!(any(target_os = "macos", target_os = "windows")) {
+            info!("OS event listener only supported on macOS and Windows");
             return;
         }
 
@@ -63,7 +63,10 @@ impl OsEventListener {
                     #[cfg(target_os = "macos")]
                     macos::run_event_loop(events, max_events, running);
 
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(target_os = "windows")]
+                    windows::run_event_loop(events, max_events, running);
+
+                    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
                     {
                         let _ = (events, max_events, running);
                     }
@@ -269,6 +272,100 @@ mod macos {
         get_frontmost_app()
             .map(|app| app == "loginwindow" || app == "ScreenSaverEngine")
             .unwrap_or(false)
+    }
+}
+
+// ─── Windows implementation ──────────────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
+mod windows {
+    use super::*;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::ProcessStatus::GetModuleFileNameExW;
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
+
+    /// Poll-based event loop for Windows — checks foreground window changes.
+    pub fn run_event_loop(
+        events: Arc<Mutex<VecDeque<OsEvent>>>,
+        max_events: usize,
+        running: Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        info!("OS event loop started (Windows polling mode)");
+
+        let mut last_app: Option<String> = None;
+
+        while running.load(std::sync::atomic::Ordering::SeqCst) {
+            if let Some(app_name) = get_foreground_app() {
+                let changed = last_app.as_ref() != Some(&app_name);
+                if changed {
+                    if let Some(ref prev) = last_app {
+                        push_event(&events, max_events, "app_deactivated", Some(prev.clone()));
+                    }
+                    push_event(
+                        &events,
+                        max_events,
+                        "app_activated",
+                        Some(app_name.clone()),
+                    );
+                    debug!("OS event: app_activated -> {app_name}");
+                    last_app = Some(app_name);
+                }
+            }
+
+            // Screen lock detection: when locked, GetForegroundWindow returns 0
+            // or the foreground app is LockApp.exe / LogonUI.exe
+            if is_screen_locked() {
+                push_event(&events, max_events, "screen_locked", None);
+                debug!("OS event: screen_locked");
+                while running.load(std::sync::atomic::Ordering::SeqCst) && is_screen_locked() {
+                    thread::sleep(std::time::Duration::from_secs(1));
+                }
+                if running.load(std::sync::atomic::Ordering::SeqCst) {
+                    push_event(&events, max_events, "screen_unlocked", None);
+                    debug!("OS event: screen_unlocked");
+                }
+            }
+
+            thread::sleep(std::time::Duration::from_secs(1));
+        }
+
+        info!("OS event loop stopped");
+    }
+
+    fn get_foreground_app() -> Option<String> {
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            if hwnd == HWND::default() {
+                return None;
+            }
+
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid == 0 {
+                return None;
+            }
+
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+            let mut buf = [0u16; 260];
+            let len = GetModuleFileNameExW(Some(handle), None, &mut buf);
+            if len == 0 {
+                return None;
+            }
+            let full_path = String::from_utf16_lossy(&buf[..len as usize]);
+            full_path.rsplit('\\').next().map(|s| s.to_string())
+        }
+    }
+
+    fn is_screen_locked() -> bool {
+        get_foreground_app()
+            .map(|app| {
+                let lower = app.to_lowercase();
+                lower == "lockapp.exe" || lower == "logonui.exe"
+            })
+            .unwrap_or(true) // No foreground window = likely locked
     }
 }
 
