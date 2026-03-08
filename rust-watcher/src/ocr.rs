@@ -46,7 +46,13 @@ impl OcrEngine {
     }
 
     /// Capture the screen and run OCR. Returns None if too soon or unavailable.
+    /// If `window_id` is provided, captures only that window; otherwise full screen.
     pub fn capture_and_ocr(&mut self) -> Option<OcrResult> {
+        self.capture_and_ocr_window(None)
+    }
+
+    /// Capture a specific window (by CGWindowID) or full screen if None.
+    pub fn capture_and_ocr_window(&mut self, window_id: Option<u32>) -> Option<OcrResult> {
         if !self.available {
             return None;
         }
@@ -59,7 +65,7 @@ impl OcrEngine {
 
         #[cfg(target_os = "macos")]
         {
-            match macos::capture_and_ocr(self.max_keywords) {
+            match macos::capture_and_ocr(self.max_keywords, window_id) {
                 Ok(result) => Some(result),
                 Err(e) => {
                     warn!("OCR capture failed: {e}");
@@ -159,8 +165,8 @@ mod macos {
     const K_CG_WINDOW_IMAGE_DEFAULT: u32 = 0;
     const K_CG_NULL_WINDOW_ID: u32 = 0;
 
-    /// Capture the main display and run Vision OCR on it.
-    pub fn capture_and_ocr(max_keywords: usize) -> Result<OcrResult, String> {
+    /// Capture the focused window (or full screen as fallback) and run Vision OCR.
+    pub fn capture_and_ocr(max_keywords: usize, window_id: Option<u32>) -> Result<OcrResult, String> {
         unsafe {
             // Create an autorelease pool to drain all autoreleased ObjC objects
             // (NSArray, VNRecognizedText, etc.) created during OCR.
@@ -178,16 +184,31 @@ mod macos {
                 sel_registerName(b"init\0".as_ptr()),
             );
 
-            // 1. Capture screen using CGWindowList (works without ScreenCaptureKit permission)
-            let display_id = CGMainDisplayID();
-            let bounds = CGDisplayBounds(display_id);
-
-            let image = CGWindowListCreateImage(
-                bounds,
-                K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY,
-                K_CG_NULL_WINDOW_ID,
-                K_CG_WINDOW_IMAGE_DEFAULT,
-            );
+            // 1. Capture the focused window if we have its ID, else full screen.
+            // CGWindowListCreateImage with a specific window_id and
+            // kCGWindowListOptionIncludingWindow captures just that window.
+            let image = if let Some(wid) = window_id {
+                // kCGWindowListOptionIncludingWindow = (1 << 3) = 8
+                // kCGWindowImageBoundsIgnoreFraming = (1 << 0) = 1
+                CGWindowListCreateImage(
+                    CGRect {
+                        origin: CGPoint { x: 0.0, y: 0.0 },
+                        size: CGSize { width: 0.0, height: 0.0 },
+                    }, // CGRectNull — auto-size to the window bounds
+                    8, // kCGWindowListOptionIncludingWindow
+                    wid,
+                    1, // kCGWindowImageBoundsIgnoreFraming
+                )
+            } else {
+                let display_id = CGMainDisplayID();
+                let bounds = CGDisplayBounds(display_id);
+                CGWindowListCreateImage(
+                    bounds,
+                    K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY,
+                    K_CG_NULL_WINDOW_ID,
+                    K_CG_WINDOW_IMAGE_DEFAULT,
+                )
+            };
 
             if image.is_null() {
                 send0(pool, sel_registerName(b"drain\0".as_ptr()));

@@ -12,6 +12,16 @@ pub struct WindowInfo {
     pub title: String,
 }
 
+/// Get the CGWindowID of the frontmost/focused window (macOS only).
+/// Used to capture just the focused window for OCR instead of the full screen.
+pub fn get_focused_window_id() -> Option<u32> {
+    #[cfg(target_os = "macos")]
+    return macos::get_focused_window_id();
+
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
 /// Get the currently focused window (app name + title).
 ///
 /// This is the fast path called every 1s heartbeat. On macOS it uses
@@ -242,6 +252,138 @@ mod macos {
                 app: app_name,
                 title: String::new(),
             })
+        }
+    }
+
+    /// Get the CGWindowID of the focused window using CGWindowListCopyWindowInfo.
+    /// Finds the frontmost window of the frontmost app by matching PID.
+    pub fn get_focused_window_id() -> Option<u32> {
+        use core_foundation::base::TCFType;
+        use core_foundation::string::CFString;
+
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> *const c_void;
+        }
+
+        #[link(name = "objc", kind = "dylib")]
+        extern "C" {
+            fn objc_getClass(name: *const u8) -> *const c_void;
+            fn sel_registerName(name: *const u8) -> *const c_void;
+        }
+        extern "C" {
+            fn objc_msgSend();
+        }
+
+        type MsgSend0 = unsafe extern "C" fn(*const c_void, *const c_void) -> *const c_void;
+        type MsgSend1Ptr =
+            unsafe extern "C" fn(*const c_void, *const c_void, *const c_void) -> *const c_void;
+        type MsgSend1Usize =
+            unsafe extern "C" fn(*const c_void, *const c_void, usize) -> *const c_void;
+
+        unsafe {
+            let msg = objc_msgSend as *const c_void;
+            let send0: MsgSend0 = std::mem::transmute(msg);
+            let send1p: MsgSend1Ptr = std::mem::transmute(msg);
+            let send1u: MsgSend1Usize = std::mem::transmute(msg);
+
+            // Get the PID of the frontmost app
+            let workspace = send0(
+                objc_getClass(b"NSWorkspace\0".as_ptr()),
+                sel_registerName(b"sharedWorkspace\0".as_ptr()),
+            );
+            if workspace.is_null() {
+                return None;
+            }
+            let front_app = send0(
+                workspace,
+                sel_registerName(b"frontmostApplication\0".as_ptr()),
+            );
+            if front_app.is_null() {
+                return None;
+            }
+            // processIdentifier returns pid_t (i32)
+            type MsgSendInt = unsafe extern "C" fn(*const c_void, *const c_void) -> i32;
+            let send_int: MsgSendInt = std::mem::transmute(msg);
+            let front_pid = send_int(
+                front_app,
+                sel_registerName(b"processIdentifier\0".as_ptr()),
+            );
+            if front_pid <= 0 {
+                return None;
+            }
+
+            // kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements = 1 | 16 = 17
+            let window_list = CGWindowListCopyWindowInfo(17, 0);
+            if window_list.is_null() {
+                return None;
+            }
+
+            let count = send0(window_list as _, sel_registerName(b"count\0".as_ptr())) as usize;
+
+            let key_pid = CFString::new("kCGWindowOwnerPID");
+            let key_wid = CFString::new("kCGWindowNumber");
+            let key_layer = CFString::new("kCGWindowLayer");
+
+            let mut result = None;
+
+            for i in 0..count {
+                let dict = send1u(
+                    window_list as _,
+                    sel_registerName(b"objectAtIndex:\0".as_ptr()),
+                    i,
+                );
+                if dict.is_null() {
+                    continue;
+                }
+
+                // Get window owner PID
+                let pid_val = send1p(
+                    dict,
+                    sel_registerName(b"objectForKey:\0".as_ptr()),
+                    key_pid.as_concrete_TypeRef() as *const c_void,
+                );
+                if pid_val.is_null() {
+                    continue;
+                }
+                type MsgSendI32 = unsafe extern "C" fn(*const c_void, *const c_void) -> i32;
+                let send_i32: MsgSendI32 = std::mem::transmute(msg);
+                let pid = send_i32(pid_val, sel_registerName(b"intValue\0".as_ptr()));
+                if pid != front_pid {
+                    continue;
+                }
+
+                // Check window layer (0 = normal window)
+                let layer_val = send1p(
+                    dict,
+                    sel_registerName(b"objectForKey:\0".as_ptr()),
+                    key_layer.as_concrete_TypeRef() as *const c_void,
+                );
+                if !layer_val.is_null() {
+                    let layer = send_i32(layer_val, sel_registerName(b"intValue\0".as_ptr()));
+                    if layer != 0 {
+                        continue;
+                    }
+                }
+
+                // Get window ID
+                let wid_val = send1p(
+                    dict,
+                    sel_registerName(b"objectForKey:\0".as_ptr()),
+                    key_wid.as_concrete_TypeRef() as *const c_void,
+                );
+                if wid_val.is_null() {
+                    continue;
+                }
+                let wid = send_i32(wid_val, sel_registerName(b"intValue\0".as_ptr()));
+                if wid > 0 {
+                    result = Some(wid as u32);
+                    break; // First normal-layer window of the frontmost app
+                }
+            }
+
+            CFRelease(window_list);
+            result
         }
     }
 }

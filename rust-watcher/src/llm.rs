@@ -89,8 +89,19 @@ impl LlmClient {
             .is_ok()
     }
 
-    /// Summarize OCR text using the LLM.
+    /// Summarize OCR text using the LLM (without context).
     pub fn summarize_ocr(&self, ocr_text: &str) -> Option<LlmSummary> {
+        self.summarize_ocr_with_context(ocr_text, "", "")
+    }
+
+    /// Summarize OCR text with app/title context for better accuracy.
+    /// The app and title tell the LLM which window is focused.
+    pub fn summarize_ocr_with_context(
+        &self,
+        ocr_text: &str,
+        app: &str,
+        title: &str,
+    ) -> Option<LlmSummary> {
         if !self.config.enabled || ocr_text.trim().is_empty() {
             return None;
         }
@@ -106,7 +117,13 @@ impl LlmClient {
             ocr_text
         };
 
-        let prompt = format!("{TEXT_SUMMARIZE_PROMPT}{text}\"");
+        let context = if !app.is_empty() {
+            format!("\nActive app: {app}\nWindow title: {title}\n")
+        } else {
+            String::new()
+        };
+
+        let prompt = format!("{TEXT_SUMMARIZE_PROMPT}{context}\"{text}\"");
         let schema: serde_json::Value =
             serde_json::from_str(JSON_SCHEMA).expect("invalid JSON schema");
 

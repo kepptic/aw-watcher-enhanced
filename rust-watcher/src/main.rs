@@ -376,9 +376,11 @@ fn main() {
                             }
                         }
 
-                        // OCR capture
+                        // OCR capture — focused window only for better accuracy
                         if let Some(ref mut engine) = ocr_engine {
-                            if let Some(ocr_result) = engine.capture_and_ocr() {
+                            let wid = window::get_focused_window_id();
+                            debug!("OCR window_id={:?} for {}", wid, info.app);
+                            if let Some(ocr_result) = engine.capture_and_ocr_window(wid) {
                                 if !ocr_result.keywords.is_empty() {
                                     let kw: Vec<serde_json::Value> = ocr_result
                                         .keywords
@@ -387,9 +389,13 @@ fn main() {
                                         .collect();
                                     data.insert("ocr_keywords".into(), kw.into());
                                 }
-                                // Run LLM summarization if available
+                                // Run LLM summarization with app context
                                 if let Some(ref llm) = _llm_client {
-                                    if let Some(summary) = llm.summarize_ocr(&ocr_result.full_text) {
+                                    if let Some(summary) = llm.summarize_ocr_with_context(
+                                        &ocr_result.full_text,
+                                        &info.app,
+                                        &effective_title,
+                                    ) {
                                         if let Some(s) = summary.summary {
                                             data.insert("ocr_summary".into(), s.into());
                                         }
