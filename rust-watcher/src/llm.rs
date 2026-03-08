@@ -12,27 +12,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::LlmConfig;
 
-const TEXT_SUMMARIZE_PROMPT: &str = r#"You are a work-activity tracker. Given OCR text from a screenshot, extract:
-1. keywords: Up to 10 important words about what the user is working on
-2. client: The client/company name if identifiable (or null)
-3. project: The project name if identifiable (or null)
-4. summary: A brief 1-sentence summary of what the user is doing
+const TEXT_SUMMARIZE_PROMPT: &str = r#"Extract structured data from this screenshot OCR text.
+- keywords: Up to 8 single-word keywords (no phrases)
+- client: Client/company name or null
+- project: Project name or null
+- summary: One short sentence about the activity
 
-Respond ONLY with valid JSON, no markdown:
-{"keywords":["word1","word2"],"client":null,"project":null,"summary":"..."}
-
-Examples:
-Input: "Visual Studio Code main.py dagtech-api src/routes/auth.py def login_user password_hash"
-Output: {"keywords":["python","auth","login","api","routes"],"client":"dagtech","project":"dagtech-api","summary":"Writing authentication route handler in Python"}
-
-Input: "Google Chrome Jira Board Sprint 23 ACME-1234 Fix payment gateway timeout"
-Output: {"keywords":["jira","sprint","payment","gateway","timeout","fix"],"client":"ACME","project":null,"summary":"Working on payment gateway timeout fix in Jira"}
-
-Input: "Slack #general Hey team, standup in 5 minutes"
-Output: {"keywords":["slack","standup","team","communication"],"client":null,"project":null,"summary":"Team communication on Slack about standup"}
-
-Now analyze this OCR text:
+OCR text:
 "#;
+
+/// JSON schema for Ollama structured output (format parameter).
+/// Ensures the model always returns valid, parseable JSON.
+const JSON_SCHEMA: &str = r#"{"type":"object","properties":{"keywords":{"type":"array","items":{"type":"string"}},"client":{"type":["string","null"]},"project":{"type":["string","null"]},"summary":{"type":"string"}},"required":["keywords","summary"]}"#;
 
 /// LLM response for OCR summarization.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -53,6 +44,7 @@ struct OllamaRequest {
     model: String,
     prompt: String,
     stream: bool,
+    format: serde_json::Value,
     options: OllamaOptions,
 }
 
@@ -115,14 +107,17 @@ impl LlmClient {
         };
 
         let prompt = format!("{TEXT_SUMMARIZE_PROMPT}{text}\"");
+        let schema: serde_json::Value =
+            serde_json::from_str(JSON_SCHEMA).expect("invalid JSON schema");
 
         let request = OllamaRequest {
             model: self.config.model.clone(),
             prompt,
             stream: false,
+            format: schema,
             options: OllamaOptions {
-                temperature: 0.1,
-                num_predict: 256,
+                temperature: 0.0,
+                num_predict: 384,
             },
         };
 
