@@ -430,13 +430,14 @@ fn main() {
                         let mut volatile = serde_json::Map::new();
                         for &key in VOLATILE_KEYS {
                             if let Some(v) = data.remove(key) {
-                                volatile.insert(key.into(), v);
+                                // Flatten arrays/objects to strings for AW UI compatibility
+                                let flat = flatten_value(key, v);
+                                volatile.insert(key.into(), flat);
                             }
                         }
 
                         // Send volatile data to snapshot bucket (once per enrichment cycle)
                         if !volatile.is_empty() {
-                            // Include app/title for context
                             volatile.insert("app".into(), info.app.clone().into());
                             volatile.insert("title".into(), info.title.clone().into());
                             let snap_event = Event {
@@ -574,6 +575,48 @@ fn main() {
     let _ = heartbeat_handle.join();
     let _ = enrichment_handle.join();
     info!("{WATCHER_NAME} stopped");
+}
+
+/// Flatten a JSON value to a string for AW UI display.
+/// Arrays become comma-separated strings; objects become "key: value" pairs.
+fn flatten_value(key: &str, v: serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::Array(arr) => {
+            let parts: Vec<String> = arr
+                .into_iter()
+                .map(|item| match item {
+                    serde_json::Value::String(s) => s,
+                    serde_json::Value::Object(obj) => {
+                        // recent_files: [{action, path}] → "path (action)"
+                        if key == "recent_files" {
+                            let path = obj.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                            let action = obj.get("action").and_then(|v| v.as_str()).unwrap_or("");
+                            if !action.is_empty() {
+                                format!("{path} ({action})")
+                            } else {
+                                path.to_string()
+                            }
+                        // os_events: [{type, app}] → "type: app"
+                        } else if key == "os_events" {
+                            let etype = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                            let app = obj.get("app").and_then(|v| v.as_str()).unwrap_or("");
+                            if !app.is_empty() {
+                                format!("{etype}: {app}")
+                            } else {
+                                etype.to_string()
+                            }
+                        } else {
+                            serde_json::to_string(&serde_json::Value::Object(obj))
+                                .unwrap_or_default()
+                        }
+                    }
+                    other => other.to_string(),
+                })
+                .collect();
+            parts.join(", ").into()
+        }
+        other => other,
+    }
 }
 
 /// Build event data with cheap enrichment (no network/OCR).
