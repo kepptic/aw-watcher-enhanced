@@ -192,7 +192,14 @@ mod macos {
                 // kCGWindowImageBoundsIgnoreFraming = (1 << 0) = 1
                 CGWindowListCreateImage(
                     CGRect {
-                        origin: CGPoint { x: 0.0, y: 0.0 },
+                        // CGRectNull is represented as an infinite origin with a
+                        // zero size. A zero origin/zero size is CGRectZero and
+                        // yields an empty image instead of auto-sizing to the
+                        // requested window.
+                        origin: CGPoint {
+                            x: f64::INFINITY,
+                            y: f64::INFINITY,
+                        },
                         size: CGSize { width: 0.0, height: 0.0 },
                     }, // CGRectNull — auto-size to the window bounds
                     8, // kCGWindowListOptionIncludingWindow

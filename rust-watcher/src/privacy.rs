@@ -85,6 +85,18 @@ pub fn apply_privacy_filters(
                 if re.is_match(&title) {
                     debug!("Redacting title matching: {pattern}");
                     data.insert("title".into(), "[REDACTED]".into());
+                    for key in [
+                        "doc_file",
+                        "doc_project",
+                        "doc_type",
+                        "doc_ext",
+                        "ocr_keywords",
+                        "ocr_summary",
+                        "ocr_client",
+                        "ocr_project",
+                    ] {
+                        data.remove(key);
+                    }
                     break;
                 }
             }
@@ -103,6 +115,14 @@ pub fn apply_privacy_filters(
                         debug!("Redacting URL matching: {pattern}");
                         data.insert("url".into(), "[REDACTED]".into());
                         data.insert("domain".into(), "[REDACTED]".into());
+                        for key in [
+                            "ocr_keywords",
+                            "ocr_summary",
+                            "ocr_client",
+                            "ocr_project",
+                        ] {
+                            data.remove(key);
+                        }
                         break;
                     }
                 }
@@ -118,15 +138,23 @@ pub fn apply_privacy_filters(
         if let Some(arr) = keywords.as_array() {
             let filtered: Vec<serde_json::Value> = arr
                 .iter()
-                .filter(|kw| {
+                .filter_map(|kw| {
                     let s = kw.as_str().unwrap_or("");
-                    !config.redact_patterns.iter().any(|pat| {
+                    let matches_sensitive_pattern = config.redact_patterns.iter().any(|pat| {
                         Regex::new(pat)
                             .map(|re| re.is_match(s))
                             .unwrap_or(false)
-                    })
+                    });
+                    if matches_sensitive_pattern {
+                        return None;
+                    }
+                    let cleaned = if config.redact_emails || config.redact_phones {
+                        redact_pii(s)
+                    } else {
+                        s.to_string()
+                    };
+                    Some(serde_json::Value::String(cleaned))
                 })
-                .cloned()
                 .collect();
             data.insert("ocr_keywords".into(), filtered.into());
         }
@@ -190,8 +218,46 @@ mod tests {
         let mut data = serde_json::Map::new();
         data.insert("app".into(), "Chrome".into());
         data.insert("title".into(), "My Password Manager".into());
+        data.insert("doc_file".into(), "credentials.txt".into());
+        data.insert("ocr_keywords".into(), serde_json::json!(["credentials"]));
         assert!(apply_privacy_filters(&mut data, &config));
         assert_eq!(data.get("title").unwrap().as_str().unwrap(), "[REDACTED]");
+        assert!(!data.contains_key("doc_file"));
+        assert!(!data.contains_key("ocr_keywords"));
+    }
+
+    #[test]
+    fn test_apply_filters_redact_url_removes_ocr() {
+        let config = PrivacyConfig::default();
+        let mut data = serde_json::Map::new();
+        data.insert("app".into(), "Chrome".into());
+        data.insert("title".into(), "Account".into());
+        data.insert("url".into(), "https://bank.example/account".into());
+        data.insert("domain".into(), "bank.example".into());
+        data.insert("ocr_keywords".into(), serde_json::json!(["balance"]));
+        assert!(apply_privacy_filters(&mut data, &config));
+        assert_eq!(data.get("url").unwrap(), "[REDACTED]");
+        assert_eq!(data.get("domain").unwrap(), "[REDACTED]");
+        assert!(!data.contains_key("ocr_keywords"));
+    }
+
+    #[test]
+    fn test_apply_filters_scrubs_ocr_keywords() {
+        let mut config = PrivacyConfig::default();
+        config.redact_patterns = vec![r"(?i).*token.*".into()];
+        config.redact_emails = true;
+        let mut data = serde_json::Map::new();
+        data.insert("app".into(), "Code".into());
+        data.insert("title".into(), "main.rs".into());
+        data.insert(
+            "ocr_keywords".into(),
+            serde_json::json!(["api_token", "dev@example.com", "project"]),
+        );
+        assert!(apply_privacy_filters(&mut data, &config));
+        assert_eq!(
+            data.get("ocr_keywords").unwrap(),
+            &serde_json::json!(["[EMAIL]", "project"])
+        );
     }
 
     #[test]

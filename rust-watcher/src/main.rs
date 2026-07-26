@@ -278,6 +278,26 @@ fn main() {
                             }
                         }
 
+                        // Re-apply privacy after browser enrichment so sensitive URLs and
+                        // clean tab titles are filtered before categorization or OCR.
+                        if !privacy::apply_privacy_filters(&mut data, &config.privacy) {
+                            if let Ok(mut state) = shared.lock() {
+                                state.enriched_data = None;
+                                state.enriched_window_key = None;
+                            }
+                            continue;
+                        }
+                        let suppress_ocr = data
+                            .get("title")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v == "[REDACTED]")
+                            .unwrap_or(false)
+                            || data
+                                .get("url")
+                                .and_then(|v| v.as_str())
+                                .map(|v| v == "[REDACTED]")
+                                .unwrap_or(false);
+
                         // Categorize (after browser merge so URL/domain are available)
                         let category = categorizer::categorize_with_url(
                             &info.app, &effective_title, &url, &domain,
@@ -377,33 +397,35 @@ fn main() {
                         }
 
                         // OCR capture — focused window only for better accuracy
-                        if let Some(ref mut engine) = ocr_engine {
-                            let wid = window::get_focused_window_id();
-                            debug!("OCR window_id={:?} for {}", wid, info.app);
-                            if let Some(ocr_result) = engine.capture_and_ocr_window(wid) {
-                                if !ocr_result.keywords.is_empty() {
-                                    let kw: Vec<serde_json::Value> = ocr_result
-                                        .keywords
-                                        .iter()
-                                        .map(|k| k.clone().into())
-                                        .collect();
-                                    data.insert("ocr_keywords".into(), kw.into());
-                                }
-                                // Run LLM summarization with app context
-                                if let Some(ref llm) = _llm_client {
-                                    if let Some(summary) = llm.summarize_ocr_with_context(
-                                        &ocr_result.full_text,
-                                        &info.app,
-                                        &effective_title,
-                                    ) {
-                                        if let Some(s) = summary.summary {
-                                            data.insert("ocr_summary".into(), s.into());
-                                        }
-                                        if let Some(c) = summary.client {
-                                            data.insert("ocr_client".into(), c.into());
-                                        }
-                                        if let Some(p) = summary.project {
-                                            data.insert("ocr_project".into(), p.into());
+                        if !suppress_ocr {
+                            if let Some(ref mut engine) = ocr_engine {
+                                let wid = window::get_focused_window_id();
+                                debug!("OCR window_id={:?} for {}", wid, info.app);
+                                if let Some(ocr_result) = engine.capture_and_ocr_window(wid) {
+                                    if !ocr_result.keywords.is_empty() {
+                                        let kw: Vec<serde_json::Value> = ocr_result
+                                            .keywords
+                                            .iter()
+                                            .map(|k| k.clone().into())
+                                            .collect();
+                                        data.insert("ocr_keywords".into(), kw.into());
+                                    }
+                                    // Run LLM summarization with app context
+                                    if let Some(ref llm) = _llm_client {
+                                        if let Some(summary) = llm.summarize_ocr_with_context(
+                                            &ocr_result.full_text,
+                                            &info.app,
+                                            &effective_title,
+                                        ) {
+                                            if let Some(s) = summary.summary {
+                                                data.insert("ocr_summary".into(), s.into());
+                                            }
+                                            if let Some(c) = summary.client {
+                                                data.insert("ocr_client".into(), c.into());
+                                            }
+                                            if let Some(p) = summary.project {
+                                                data.insert("ocr_project".into(), p.into());
+                                            }
                                         }
                                     }
                                 }
@@ -527,7 +549,7 @@ fn main() {
 
                     // Build event data — use enriched state if available, else reuse
                     // the last known enriched data so the server can merge heartbeats.
-                    let data = if let Ok(state) = shared.lock() {
+                    let mut data = if let Ok(state) = shared.lock() {
                         if state.enriched_window_key.as_ref() == Some(&current_key) {
                             if let Some(ref enriched) = state.enriched_data {
                                 last_enriched = Some(enriched.clone());
@@ -546,6 +568,14 @@ fn main() {
                     } else {
                         quick_enriched_data(&window)
                     };
+
+                    // The heartbeat path can run before enrichment completes. Apply the
+                    // same privacy policy here so that fast/basic events cannot bypass it.
+                    if !privacy::apply_privacy_filters(&mut data, &config.privacy) {
+                        last_window = Some(current_key);
+                        thread::sleep(Duration::from_millis(sleep_ms));
+                        continue;
+                    }
 
                     let event = Event {
                         timestamp: Utc::now(),
