@@ -248,6 +248,14 @@ privacy:
 - **Auto-Exclusions** - Password managers automatically excluded
 - **Content Redaction** - Optional PII redaction (emails, phones, SSNs, credit cards)
 
+## Privacy
+
+- **Records:** the focused app name and window title, the focused UI element and its breadcrumb, browser URL/domain (merged from aw-watcher-web), the last 5 modified file paths in `~/Documents`, `~/Desktop`, `~/Projects`, `~/Developer` and `~/Code`, meeting state, mouse/keyboard activity percentage (not keystrokes), and keywords and entities extracted from OCR of the focused window. It does not store screenshots or raw OCR text.
+- **Local only:** events go to your own ActivityWatch server at `127.0.0.1:5600`. If LLM summarization is enabled, OCR text, app and window title are sent to a local Ollama at `localhost:11434`. The watcher itself contacts no other server.
+- **Stored in:** ActivityWatch buckets `aw-watcher-enhanced_<hostname>` and `aw-watcher-enhanced_snapshot_<hostname>`; config lives in `<config dir>/activitywatch/aw-watcher-enhanced/`.
+- **Delete:** remove those buckets in the ActivityWatch web UI (Buckets, then delete), or `curl -X DELETE "http://127.0.0.1:5600/api/0/buckets/<bucket-id>?force=1"`.
+- **Shared or work machines:** tell anyone whose activity is tracked (including other users of the machine) that this watcher is installed and what it records.
+
 ## Performance
 
 On Apple Silicon (M1/M2/M3):
